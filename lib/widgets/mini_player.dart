@@ -41,6 +41,13 @@ class MiniPlayer extends ConsumerWidget {
               ),
             ),
             IconButton(
+              icon: const Icon(Icons.skip_previous),
+              onPressed: () {
+                final player = ref.read(audioPlayerProvider);
+                if (player.hasPrevious) player.seekToPrevious();
+              },
+            ),
+            IconButton(
               icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
               onPressed: () {
                 final player = ref.read(audioPlayerProvider);
@@ -49,6 +56,13 @@ class MiniPlayer extends ConsumerWidget {
                 } else {
                   player.play();
                 }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.skip_next),
+              onPressed: () {
+                final player = ref.read(audioPlayerProvider);
+                if (player.hasNext) player.seekToNext();
               },
             ),
             const SizedBox(width: 8),

@@ -6,7 +6,8 @@ import 'package:musiqa/screens/tabs/albums_tab.dart';
 import 'package:musiqa/screens/tabs/artists_tab.dart';
 import 'package:musiqa/widgets/mini_player.dart';
 import 'package:musiqa/providers/audio_provider.dart';
-
+import 'package:musiqa/providers/metadata_provider.dart';
+import 'package:musiqa/providers/audio_query_provider.dart';
 class MainLayout extends ConsumerStatefulWidget {
   const MainLayout({super.key});
 
@@ -27,6 +28,37 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Musiqa'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'Scan BPM & Keys',
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Scanning library for BPM and Keys...')),
+              );
+              final metadataProviderInstance = ref.read(metadataProvider);
+              try {
+                final songs = await ref.read(songsProvider.future);
+                await metadataProviderInstance.scanAllSongs(songs);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Scan complete!')),
+                  );
+                }
+                ref.invalidate(metadataProvider);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error scanning: $e')),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [

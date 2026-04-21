@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_query_provider.dart';
 import 'package:on_audio_query/on_audio_query.dart';
+import 'package:musiqa/screens/album_details_screen.dart';
 
 class AlbumsTab extends ConsumerWidget {
   const AlbumsTab({super.key});
@@ -27,6 +28,13 @@ class AlbumsTab extends ConsumerWidget {
               ),
               title: Text(album.album),
               subtitle: Text("${album.numOfSongs} Songs"),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => AlbumDetailsScreen(album: album),
+                  ),
+                );
+              },
             );
           },
         );

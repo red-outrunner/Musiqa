@@ -3,12 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/screens/main_layout.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:musiqa/providers/metadata_provider.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _requestPermissions();
+  
+  final prefs = await SharedPreferences.getInstance();
+
   runApp(
-    const ProviderScope(
-      child: MusiqaApp(),
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
+      ],
+      child: const MusiqaApp(),
     ),
   );
 }
