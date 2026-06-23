@@ -4,8 +4,8 @@ import 'package:musiqa/screens/tabs/queue_tab.dart';
 import 'package:musiqa/screens/tabs/playlists_tab.dart';
 import 'package:musiqa/screens/tabs/albums_tab.dart';
 import 'package:musiqa/screens/tabs/artists_tab.dart';
+import 'package:musiqa/screens/player_screen.dart';
 import 'package:musiqa/widgets/mini_player.dart';
-import 'package:musiqa/providers/audio_provider.dart';
 import 'package:musiqa/providers/metadata_provider.dart';
 import 'package:musiqa/providers/audio_query_provider.dart';
 class MainLayout extends ConsumerStatefulWidget {
@@ -20,6 +20,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
   final List<Widget> _tabs = [
     const QueueTab(),
+    const NowPlayingTab(),
     const PlaylistsTab(),
     const AlbumsTab(),
     const ArtistsTab(),
@@ -81,6 +82,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.queue_music), label: 'Queue'),
+          NavigationDestination(icon: Icon(Icons.play_circle_outline), label: 'Now'),
           NavigationDestination(icon: Icon(Icons.playlist_play), label: 'Playlists'),
           NavigationDestination(icon: Icon(Icons.album), label: 'Albums'),
           NavigationDestination(icon: Icon(Icons.person), label: 'Artists'),

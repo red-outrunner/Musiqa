@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_query_provider.dart';
+import 'package:musiqa/screens/artist_details_screen.dart';
 
 class ArtistsTab extends ConsumerWidget {
   const ArtistsTab({super.key});
@@ -22,6 +23,13 @@ class ArtistsTab extends ConsumerWidget {
               leading: const Icon(Icons.person, size: 50),
               title: Text(artist.artist),
               subtitle: Text("${artist.numberOfAlbums} Albums | ${artist.numberOfTracks} Tracks"),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => ArtistDetailsScreen(artist: artist),
+                  ),
+                );
+              },
             );
           },
         );

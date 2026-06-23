@@ -1,53 +1,67 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:musiqa/providers/audio_query_provider.dart';
 import 'package:musiqa/providers/audio_provider.dart';
-import 'package:musiqa/providers/metadata_provider.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:musiqa/widgets/song_tile.dart';
 
 class QueueTab extends ConsumerWidget {
   const QueueTab({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final songsAsyncValue = ref.watch(songsProvider);
-    final metadata = ref.watch(metadataProvider);
+    final playback = ref.watch(playbackControllerProvider);
+    final controller = ref.read(playbackControllerProvider.notifier);
+    final queue = playback.queue;
 
-    return songsAsyncValue.when(
-      data: (songs) {
-        if (songs.isEmpty) {
-          return const Center(child: Text("No songs found"));
-        }
-        return ReorderableListView.builder(
-          itemCount: songs.length,
-          onReorder: (oldIndex, newIndex) {
-            // Logic for reordering
-          },
-          itemBuilder: (context, index) {
-            final song = songs[index];
-            final bpm = metadata.getBpm(song.id);
-            final key = metadata.getKey(song.id);
-            
-            return ListTile(
-              key: ValueKey(song.id),
-              leading: const Icon(Icons.music_note),
-              title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text("${song.artist ?? "Unknown artist"} • $bpm BPM • Key: $key", maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: Text("${((song.duration ?? 0) / 60000).toStringAsFixed(2)} min"),
-              onTap: () async {
-                final player = ref.read(audioPlayerProvider);
-                try {
-                  await AudioQueueManager.playQueue(player, ref, songs, index);
-                } catch (e) {
-                  debugPrint("Error playing audio: $e");
-                }
-              },
-            );
-          },
+    if (queue.isEmpty) {
+      return const Center(
+        child: Text("Queue is empty.\nPick songs from Playlists, Albums or Artists.",
+            textAlign: TextAlign.center),
+      );
+    }
+
+    return ReorderableListView.builder(
+      buildDefaultDragHandles: false,
+      itemCount: queue.length,
+      onReorder: controller.reorder,
+      itemBuilder: (context, index) {
+        final song = queue[index];
+        return SongTile(
+          key: ValueKey(song.id),
+          song: song,
+          selected: index == playback.currentIndex,
+          onTap: () => controller.jumpTo(index),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SongBadge(songId: song.id),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'next':
+                      controller.moveToNext(index);
+                      break;
+                    case 'remove':
+                      controller.removeAt(index);
+                      break;
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'next', child: Text('Play next')),
+                  PopupMenuItem(value: 'remove', child: Text('Remove from queue')),
+                ],
+              ),
+              ReorderableDragStartListener(
+                index: index,
+                child: const Padding(
+                  padding: EdgeInsets.only(left: 4, right: 8),
+                  child: Icon(Icons.drag_handle),
+                ),
+              ),
+            ],
+          ),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, stack) => Center(child: Text('Error: $err')),
     );
   }
 }

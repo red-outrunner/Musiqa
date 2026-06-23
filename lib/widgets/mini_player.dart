@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_provider.dart';
 import 'package:musiqa/screens/player_screen.dart';
+import 'package:on_audio_query/on_audio_query.dart';
 
 class MiniPlayer extends ConsumerWidget {
   const MiniPlayer({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final title = ref.watch(currentSongTitleProvider);
+    final song = ref.watch(currentSongProvider);
     final isPlaying = ref.watch(isPlayingProvider);
+    final controller = ref.read(playbackControllerProvider.notifier);
 
     return GestureDetector(
       onTap: () {
@@ -26,15 +28,22 @@ class MiniPlayer extends ConsumerWidget {
         child: Row(
           children: [
             const SizedBox(width: 8),
-            const SizedBox(
+            SizedBox(
               width: 50,
               height: 50,
-              child: Icon(Icons.music_note, size: 50),
+              child: song == null
+                  ? const Icon(Icons.music_note, size: 40)
+                  : QueryArtworkWidget(
+                      id: song.id,
+                      type: ArtworkType.AUDIO,
+                      artworkBorder: BorderRadius.circular(6),
+                      nullArtworkWidget: const Icon(Icons.music_note, size: 40),
+                    ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
-                title,
+                song?.title ?? 'Not Playing',
                 style: Theme.of(context).textTheme.titleMedium,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -42,28 +51,15 @@ class MiniPlayer extends ConsumerWidget {
             ),
             IconButton(
               icon: const Icon(Icons.skip_previous),
-              onPressed: () {
-                final player = ref.read(audioPlayerProvider);
-                if (player.hasPrevious) player.seekToPrevious();
-              },
+              onPressed: controller.previous,
             ),
             IconButton(
               icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
-              onPressed: () {
-                final player = ref.read(audioPlayerProvider);
-                if (isPlaying) {
-                  player.pause();
-                } else {
-                  player.play();
-                }
-              },
+              onPressed: controller.togglePlayPause,
             ),
             IconButton(
               icon: const Icon(Icons.skip_next),
-              onPressed: () {
-                final player = ref.read(audioPlayerProvider);
-                if (player.hasNext) player.seekToNext();
-              },
+              onPressed: controller.next,
             ),
             const SizedBox(width: 8),
           ],

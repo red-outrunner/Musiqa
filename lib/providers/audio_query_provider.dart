@@ -32,6 +32,20 @@ final albumsProvider = FutureProvider<List<AlbumModel>>((ref) async {
   return [];
 });
 
+final playlistsProvider = FutureProvider<List<PlaylistModel>>((ref) async {
+  final audioQuery = ref.read(audioQueryProvider);
+  final storageReady = await Permission.storage.request().isGranted || await Permission.audio.request().isGranted;
+  if (storageReady) {
+    return await audioQuery.queryPlaylists(
+       sortType: null,
+       orderType: OrderType.ASC_OR_SMALLER,
+       uriType: UriType.EXTERNAL,
+       ignoreCase: true,
+    );
+  }
+  return [];
+});
+
 final artistsProvider = FutureProvider<List<ArtistModel>>((ref) async {
   final audioQuery = ref.read(audioQueryProvider);
   final storageReady = await Permission.storage.request().isGranted || await Permission.audio.request().isGranted;

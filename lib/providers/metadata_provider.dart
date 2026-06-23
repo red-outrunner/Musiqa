@@ -51,4 +51,17 @@ class MetadataProvider {
 
   String getBpm(int songId) => prefs.getString('bpm_$songId') ?? 'Unknown';
   String getKey(int songId) => prefs.getString('key_$songId') ?? 'Unknown';
+
+  /// Compact tag shown next to a song, e.g. `[A|90bpm]`. Returns an empty
+  /// string when neither value is known.
+  String badge(int songId) {
+    final bpm = getBpm(songId);
+    final key = getKey(songId);
+    final hasBpm = bpm != 'Unknown';
+    final hasKey = key != 'Unknown';
+    if (!hasBpm && !hasKey) return '';
+    final k = hasKey ? key : '?';
+    final b = hasBpm ? '${bpm}bpm' : '?bpm';
+    return '[$k|$b]';
+  }
 }
