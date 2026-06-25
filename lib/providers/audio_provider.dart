@@ -98,6 +98,9 @@ class PlaybackController extends Notifier<PlaybackState> {
   bool _isCrossfading = false;
   int? _crossfadeTarget;
   Timer? _fadeTimer;
+  // Duration of the track on the active player. Captured straight from
+  // setAudioSource so it never depends on catching a stream event in time.
+  Duration? _activeDuration;
 
   final _positionCtrl = StreamController<Duration>.broadcast();
   final _durationCtrl = StreamController<Duration?>.broadcast();
@@ -277,16 +280,31 @@ class PlaybackController extends Notifier<PlaybackState> {
 
   Future<void> _loadAndPlay(AudioPlayer player, SongModel song) async {
     _cancelFade();
+    _activeDuration = null;
+    _positionCtrl.add(Duration.zero);
     try {
       await _idle.stop();
     } catch (_) {}
     try {
       await player.setVolume(1.0);
-      await player.setAudioSource(AudioSource.uri(Uri.parse(song.uri!), tag: song));
+      // setAudioSource resolves with the source duration; publish it right away
+      // so the seek bar (and crossfade timing) work from the very first track.
+      final dur = await player
+          .setAudioSource(AudioSource.uri(Uri.parse(song.uri!), tag: song));
+      _activeDuration = dur;
+      _durationCtrl.add(dur);
       await player.play();
     } catch (_) {
       // Skip unplayable sources.
     }
+  }
+
+  /// Re-publishes the active player's current position/duration. Used after a
+  /// (re)bind so listeners that joined late still get the current values.
+  void _emitSnapshot() {
+    _activeDuration = _active.duration;
+    _durationCtrl.add(_active.duration);
+    _positionCtrl.add(_active.position);
   }
 
   void _bindStreams() {
@@ -297,7 +315,10 @@ class PlaybackController extends Notifier<PlaybackState> {
 
     final p = _active;
     _posSub = p.positionStream.listen(_onPosition);
-    _durSub = p.durationStream.listen(_durationCtrl.add);
+    _durSub = p.durationStream.listen((d) {
+      if (d != null) _activeDuration = d;
+      _durationCtrl.add(d);
+    });
     _playSub = p.playingStream.listen((playing) {
       if (state.isPlaying != playing) {
         state = state.copyWith(isPlaying: playing);
@@ -306,13 +327,14 @@ class PlaybackController extends Notifier<PlaybackState> {
     _procSub = p.processingStateStream.listen((ps) {
       if (ps == ProcessingState.completed) _onCompleted();
     });
+    _emitSnapshot();
   }
 
   void _onPosition(Duration pos) {
     _positionCtrl.add(pos);
     if (_isCrossfading) return;
 
-    final dur = _active.duration;
+    final dur = _activeDuration ?? _active.duration;
     if (dur == null) return;
     if (!ref.read(crossfadeEnabledProvider)) return;
     // Crossfading into the same track makes no sense for repeat-one.
