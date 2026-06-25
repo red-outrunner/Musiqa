@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_provider.dart';
 import 'package:musiqa/widgets/song_tile.dart';
+import 'package:musiqa/widgets/song_options_menu.dart';
 
 class QueueTab extends ConsumerWidget {
   const QueueTab({super.key});
@@ -34,23 +35,7 @@ class QueueTab extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               SongBadge(songId: song.id),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) {
-                  switch (value) {
-                    case 'next':
-                      controller.moveToNext(index);
-                      break;
-                    case 'remove':
-                      controller.removeAt(index);
-                      break;
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'next', child: Text('Play next')),
-                  PopupMenuItem(value: 'remove', child: Text('Remove from queue')),
-                ],
-              ),
+              SongOptionsMenu(song: song, queueIndex: index),
               ReorderableDragStartListener(
                 index: index,
                 child: const Padding(

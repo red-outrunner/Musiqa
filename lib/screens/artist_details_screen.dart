@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_query_provider.dart';
 import 'package:musiqa/providers/audio_provider.dart';
+import 'package:musiqa/providers/metadata_provider.dart';
 import 'package:musiqa/screens/album_details_screen.dart';
 import 'package:musiqa/widgets/song_tile.dart';
 import 'package:on_audio_query/on_audio_query.dart';
@@ -42,7 +43,9 @@ class ArtistDetailsScreen extends ConsumerWidget {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
-          final songs = snapshot.data ?? [];
+          final hidden = ref.watch(hiddenSongsProvider);
+          final songs =
+              (snapshot.data ?? []).where((s) => !hidden.contains(s.id)).toList();
           songs.sort((a, b) =>
               a.title.toLowerCase().compareTo(b.title.toLowerCase()));
 

@@ -15,7 +15,11 @@ class MetadataProvider {
   
   MetadataProvider(this.prefs);
 
-  Future<void> scanAllSongs(List<SongModel> songs) async {
+  Future<void> scanAllSongs(
+    List<SongModel> songs, {
+    bool scanBpm = true,
+    bool scanKey = true,
+  }) async {
     for (var song in songs) {
       if (song.data.isEmpty) continue;
       
@@ -39,8 +43,8 @@ class MetadataProvider {
               if (tags.containsKey('TKEY')) key = tags['TKEY'].toString();
               if (tags.containsKey('TKEY') == false && tags.containsKey('INITIALKEY')) key = tags['INITIALKEY'].toString();
 
-              if (bpm != 'Unknown') await prefs.setString('bpm_${song.id}', bpm);
-              if (key != 'Unknown') await prefs.setString('key_${song.id}', key);
+              if (scanBpm && bpm != 'Unknown') await prefs.setString('bpm_${song.id}', bpm);
+              if (scanKey && key != 'Unknown') await prefs.setString('key_${song.id}', key);
            }
         }
       } catch (e) {
@@ -65,3 +69,38 @@ class MetadataProvider {
     return '[$k|$b]';
   }
 }
+
+/// Song IDs the user has hidden from library listings. Persisted in prefs.
+class HiddenSongsNotifier extends Notifier<Set<int>> {
+  static const _key = 'hidden_songs';
+
+  @override
+  Set<int> build() {
+    final prefs = ref.read(sharedPreferencesProvider);
+    final stored = prefs.getStringList(_key) ?? const [];
+    return stored.map(int.tryParse).whereType<int>().toSet();
+  }
+
+  void hide(int songId) {
+    if (state.contains(songId)) return;
+    final next = {...state, songId};
+    _persist(next);
+    state = next;
+  }
+
+  void unhide(int songId) {
+    if (!state.contains(songId)) return;
+    final next = {...state}..remove(songId);
+    _persist(next);
+    state = next;
+  }
+
+  void _persist(Set<int> ids) {
+    ref
+        .read(sharedPreferencesProvider)
+        .setStringList(_key, ids.map((e) => e.toString()).toList());
+  }
+}
+
+final hiddenSongsProvider =
+    NotifierProvider<HiddenSongsNotifier, Set<int>>(HiddenSongsNotifier.new);

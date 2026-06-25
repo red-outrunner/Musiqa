@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/metadata_provider.dart';
+import 'package:musiqa/widgets/song_options_menu.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 
 /// Shared list row for a song: album art, title, artist, and the BPM/key
@@ -24,9 +25,6 @@ class SongTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final metadata = ref.watch(metadataProvider);
-    final badge = metadata.badge(song.id);
-
     return ListTile(
       selected: selected,
       leading: leading ??
@@ -44,15 +42,13 @@ class SongTile extends ConsumerWidget {
       subtitle: Text(song.artist ?? 'Unknown artist',
           maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: trailing ??
-          (badge.isEmpty
-              ? null
-              : Text(
-                  badge,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.w600,
-                  ),
-                )),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SongBadge(songId: song.id),
+              SongOptionsMenu(song: song),
+            ],
+          ),
       onTap: onTap,
     );
   }

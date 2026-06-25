@@ -5,9 +5,8 @@ import 'package:musiqa/screens/tabs/playlists_tab.dart';
 import 'package:musiqa/screens/tabs/albums_tab.dart';
 import 'package:musiqa/screens/tabs/artists_tab.dart';
 import 'package:musiqa/screens/player_screen.dart';
+import 'package:musiqa/screens/settings_screen.dart';
 import 'package:musiqa/widgets/mini_player.dart';
-import 'package:musiqa/providers/metadata_provider.dart';
-import 'package:musiqa/providers/audio_query_provider.dart';
 class MainLayout extends ConsumerStatefulWidget {
   const MainLayout({super.key});
 
@@ -33,29 +32,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         title: const Text('Musiqa'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.sync),
-            tooltip: 'Scan BPM & Keys',
-            onPressed: () async {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Scanning library for BPM and Keys...')),
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
-              final metadataProviderInstance = ref.read(metadataProvider);
-              try {
-                final songs = await ref.read(songsProvider.future);
-                await metadataProviderInstance.scanAllSongs(songs);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Scan complete!')),
-                  );
-                }
-                ref.invalidate(metadataProvider);
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error scanning: $e')),
-                  );
-                }
-              }
             },
           ),
         ],
@@ -69,7 +51,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                 children: _tabs,
               ),
             ),
-            const MiniPlayer(),
+            // Hide the mini player on the Now Playing tab so the full-size
+            // album art has room to breathe.
+            if (_currentIndex != 1) const MiniPlayer(),
           ],
         ),
       ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_query_provider.dart';
 import 'package:musiqa/providers/audio_provider.dart';
+import 'package:musiqa/providers/metadata_provider.dart';
 import 'package:musiqa/widgets/song_tile.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 
@@ -35,7 +36,9 @@ class AlbumDetailsScreen extends ConsumerWidget {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
-          List<SongModel> songs = snapshot.data ?? [];
+          final hidden = ref.watch(hiddenSongsProvider);
+          List<SongModel> songs =
+              (snapshot.data ?? []).where((s) => !hidden.contains(s.id)).toList();
           if (songs.isEmpty) {
             return const Center(child: Text("No songs found in this album."));
           }

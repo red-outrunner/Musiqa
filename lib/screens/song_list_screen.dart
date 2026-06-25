@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:musiqa/providers/audio_provider.dart';
+import 'package:musiqa/providers/metadata_provider.dart';
 import 'package:musiqa/widgets/song_tile.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 
@@ -48,13 +49,15 @@ class SongListView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(playbackControllerProvider.notifier);
+    final hidden = ref.watch(hiddenSongsProvider);
+    final visible = songs.where((s) => !hidden.contains(s.id)).toList();
     return ListView.builder(
-      itemCount: songs.length,
+      itemCount: visible.length,
       itemBuilder: (context, index) {
-        final song = songs[index];
+        final song = visible[index];
         return SongTile(
           song: song,
-          onTap: () => controller.playQueue(songs, index),
+          onTap: () => controller.playQueue(visible, index),
         );
       },
     );

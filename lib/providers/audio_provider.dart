@@ -1,12 +1,25 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 
-/// User-configurable crossfade length in seconds (0 = no crossfade).
+/// Whether crossfade between tracks is turned on. Toggled from the player.
+class CrossfadeEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void toggle() => state = !state;
+  void set(bool value) => state = value;
+}
+
+final crossfadeEnabledProvider =
+    NotifierProvider<CrossfadeEnabledNotifier, bool>(CrossfadeEnabledNotifier.new);
+
+/// User-configurable crossfade length in seconds (used when enabled).
 class CrossfadeDurationNotifier extends Notifier<double> {
   @override
-  double build() => 3.0;
+  double build() => 5.0;
 
   void updateState(double value) {
     state = value;
@@ -15,6 +28,34 @@ class CrossfadeDurationNotifier extends Notifier<double> {
 
 final crossfadeDurationProvider =
     NotifierProvider<CrossfadeDurationNotifier, double>(CrossfadeDurationNotifier.new);
+
+/// How playback advances at the end of a track.
+/// [continuous] plays through the queue once and stops; [queue] loops the whole
+/// queue; [one] repeats the current track.
+enum RepeatPlayMode { continuous, queue, one }
+
+class RepeatPlayModeNotifier extends Notifier<RepeatPlayMode> {
+  @override
+  RepeatPlayMode build() => RepeatPlayMode.continuous;
+
+  /// Cycles continuous -> queue -> one -> continuous.
+  void cycle() {
+    state = RepeatPlayMode.values[(state.index + 1) % RepeatPlayMode.values.length];
+  }
+}
+
+final repeatModeProvider =
+    NotifierProvider<RepeatPlayModeNotifier, RepeatPlayMode>(RepeatPlayModeNotifier.new);
+
+/// Whether the next track is chosen at random.
+class ShuffleNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void toggle() => state = !state;
+}
+
+final shuffleProvider = NotifierProvider<ShuffleNotifier, bool>(ShuffleNotifier.new);
 
 /// Immutable snapshot of the playback queue exposed to the UI.
 class PlaybackState {
@@ -52,8 +93,10 @@ final playbackControllerProvider =
 /// ramps up. just_audio has no native crossfade, hence the dual-player setup.
 class PlaybackController extends Notifier<PlaybackState> {
   final List<AudioPlayer> _players = [];
+  final Random _rng = Random();
   int _activeIdx = 0;
   bool _isCrossfading = false;
+  int? _crossfadeTarget;
   Timer? _fadeTimer;
 
   final _positionCtrl = StreamController<Duration>.broadcast();
@@ -117,10 +160,35 @@ class PlaybackController extends Notifier<PlaybackState> {
   }
 
   Future<void> next() async {
-    if (!hasNext) return;
-    final nextIndex = state.currentIndex + 1;
-    state = state.copyWith(currentIndex: nextIndex, isPlaying: true);
-    await _loadAndPlay(_active, state.queue[nextIndex]);
+    final nextIndex = _computeNextIndex();
+    if (nextIndex == null) return;
+    await _goToIndex(nextIndex);
+  }
+
+  /// Resolves the index that should play after the current track, taking
+  /// shuffle and repeat mode into account. Returns null when playback should
+  /// stop (end of queue with no repeat).
+  int? _computeNextIndex() {
+    final queue = state.queue;
+    if (queue.isEmpty) return null;
+
+    if (ref.read(shuffleProvider) && queue.length > 1) {
+      int idx;
+      do {
+        idx = _rng.nextInt(queue.length);
+      } while (idx == state.currentIndex);
+      return idx;
+    }
+
+    if (hasNext) return state.currentIndex + 1;
+    if (ref.read(repeatModeProvider) == RepeatPlayMode.queue) return 0;
+    return null;
+  }
+
+  Future<void> _goToIndex(int index) async {
+    if (index < 0 || index >= state.queue.length) return;
+    state = state.copyWith(currentIndex: index, isPlaying: true);
+    await _loadAndPlay(_active, state.queue[index]);
   }
 
   Future<void> previous() async {
@@ -147,6 +215,20 @@ class PlaybackController extends Notifier<PlaybackState> {
     final newCurrent =
         current != null ? list.indexWhere((s) => s.id == current.id) : state.currentIndex;
     state = state.copyWith(queue: list, currentIndex: newCurrent);
+  }
+
+  /// Inserts a song from the library to play right after the current track.
+  /// Starts a fresh queue if nothing is playing.
+  Future<void> playNext(SongModel song) async {
+    if (song.uri == null) return;
+    if (state.queue.isEmpty) {
+      await playQueue([song], 0);
+      return;
+    }
+    final list = List<SongModel>.from(state.queue);
+    final insertAt = (state.currentIndex + 1).clamp(0, list.length);
+    list.insert(insertAt, song);
+    state = state.copyWith(queue: list);
   }
 
   /// Moves an already-queued item to play right after the current track.
@@ -232,21 +314,28 @@ class PlaybackController extends Notifier<PlaybackState> {
 
     final dur = _active.duration;
     if (dur == null) return;
+    if (!ref.read(crossfadeEnabledProvider)) return;
+    // Crossfading into the same track makes no sense for repeat-one.
+    if (ref.read(repeatModeProvider) == RepeatPlayMode.one) return;
     final cf = ref.read(crossfadeDurationProvider);
-    if (cf <= 0 || !hasNext) return;
+    if (cf <= 0) return;
+    final target = _computeNextIndex();
+    if (target == null) return;
 
     final remaining = dur - pos;
     final window = Duration(milliseconds: (cf * 1000).round());
     if (remaining <= window && remaining > Duration.zero) {
-      _startCrossfade(cf);
+      _startCrossfade(cf, target);
     }
   }
 
-  Future<void> _startCrossfade(double cf) async {
-    if (_isCrossfading || !hasNext) return;
+  Future<void> _startCrossfade(double cf, int targetIndex) async {
+    if (_isCrossfading) return;
+    if (targetIndex < 0 || targetIndex >= state.queue.length) return;
     _isCrossfading = true;
+    _crossfadeTarget = targetIndex;
 
-    final nextSong = state.queue[state.currentIndex + 1];
+    final nextSong = state.queue[targetIndex];
     final incoming = _idle;
     final outgoing = _active;
     try {
@@ -255,6 +344,7 @@ class PlaybackController extends Notifier<PlaybackState> {
       await incoming.play();
     } catch (_) {
       _isCrossfading = false;
+      _crossfadeTarget = null;
       return;
     }
 
@@ -279,21 +369,30 @@ class PlaybackController extends Notifier<PlaybackState> {
       await outgoing.setVolume(1.0);
     } catch (_) {}
     _activeIdx = 1 - _activeIdx;
-    state = state.copyWith(currentIndex: state.currentIndex + 1, isPlaying: true);
+    final target = _crossfadeTarget ?? state.currentIndex;
+    state = state.copyWith(currentIndex: target, isPlaying: true);
     _bindStreams();
     _isCrossfading = false;
+    _crossfadeTarget = null;
   }
 
   void _cancelFade() {
     _fadeTimer?.cancel();
     _fadeTimer = null;
     _isCrossfading = false;
+    _crossfadeTarget = null;
   }
 
   void _onCompleted() {
     if (_isCrossfading) return;
-    if (hasNext) {
-      next();
+    if (ref.read(repeatModeProvider) == RepeatPlayMode.one) {
+      _active.seek(Duration.zero);
+      _active.play();
+      return;
+    }
+    final nextIndex = _computeNextIndex();
+    if (nextIndex != null) {
+      _goToIndex(nextIndex);
     } else {
       _active.pause();
       _active.seek(Duration.zero);

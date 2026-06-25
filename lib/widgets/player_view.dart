@@ -12,6 +12,7 @@ class PlayerView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final song = ref.watch(currentSongProvider);
     final isPlaying = ref.watch(isPlayingProvider);
+    final crossfadeEnabled = ref.watch(crossfadeEnabledProvider);
     final crossfadeDuration = ref.watch(crossfadeDurationProvider);
 
     return Column(
@@ -57,39 +58,58 @@ class PlayerView extends ConsumerWidget {
         _buildSeekBar(context, ref),
         const SizedBox(height: 8),
         _buildPlaybackControls(context, ref, isPlaying),
-        const SizedBox(height: 24),
-        _buildCrossfadeControls(context, ref, crossfadeDuration),
+        const SizedBox(height: 16),
+        _buildCrossfadeControls(context, ref, crossfadeEnabled, crossfadeDuration),
         const SizedBox(height: 16),
       ],
     );
   }
 
-  Widget _buildCrossfadeControls(BuildContext context, WidgetRef ref, double currentVal) {
+  Widget _buildCrossfadeControls(
+      BuildContext context, WidgetRef ref, bool enabled, double currentVal) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(
+      child: Column(
         children: [
-          const Icon(Icons.compare_arrows, size: 20),
-          const SizedBox(width: 8),
-          const Text("Crossfade", style: TextStyle(fontWeight: FontWeight.bold)),
-          Expanded(
-            child: Slider(
-              value: currentVal,
-              min: 0,
-              max: 12,
-              divisions: 12,
-              label: '${currentVal.toInt()}s',
-              onChanged: (val) {
-                ref.read(crossfadeDurationProvider.notifier).updateState(val);
-              },
-            ),
+          Row(
+            children: [
+              const Icon(Icons.compare_arrows, size: 20),
+              const SizedBox(width: 8),
+              const Text("Crossfade",
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Switch(
+                value: enabled,
+                onChanged: (val) =>
+                    ref.read(crossfadeEnabledProvider.notifier).set(val),
+              ),
+            ],
           ),
-          Text(currentVal == 0 ? 'Off' : '${currentVal.toInt()}s'),
+          // Only let the length be tuned while crossfade is on.
+          if (enabled)
+            Row(
+              children: [
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Slider(
+                    value: currentVal,
+                    min: 1,
+                    max: 12,
+                    divisions: 11,
+                    label: '${currentVal.toInt()}s',
+                    onChanged: (val) {
+                      ref.read(crossfadeDurationProvider.notifier).updateState(val);
+                    },
+                  ),
+                ),
+                Text('${currentVal.toInt()}s'),
+              ],
+            ),
         ],
       ),
     );
@@ -133,25 +153,64 @@ class PlayerView extends ConsumerWidget {
 
   Widget _buildPlaybackControls(BuildContext context, WidgetRef ref, bool isPlaying) {
     final controller = ref.read(playbackControllerProvider.notifier);
+    final shuffle = ref.watch(shuffleProvider);
+    final repeatMode = ref.watch(repeatModeProvider);
+    final accent = Theme.of(context).colorScheme.primary;
+
+    // Each repeat mode gets its own glyph; "off"/continuous is dimmed.
+    final IconData repeatIcon;
+    switch (repeatMode) {
+      case RepeatPlayMode.one:
+        repeatIcon = Icons.repeat_one;
+        break;
+      case RepeatPlayMode.queue:
+        repeatIcon = Icons.repeat;
+        break;
+      case RepeatPlayMode.continuous:
+        repeatIcon = Icons.trending_flat;
+        break;
+    }
+    final repeatTooltip = switch (repeatMode) {
+      RepeatPlayMode.continuous => 'Play continuously',
+      RepeatPlayMode.queue => 'Repeat queue',
+      RepeatPlayMode.one => 'Repeat song',
+    };
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         IconButton(
-          iconSize: 48,
+          iconSize: 26,
+          tooltip: 'Shuffle',
+          color: shuffle ? accent : null,
+          icon: const Icon(Icons.shuffle),
+          onPressed: () => ref.read(shuffleProvider.notifier).toggle(),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          iconSize: 44,
           icon: const Icon(Icons.skip_previous),
           onPressed: controller.previous,
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 8),
         IconButton(
           iconSize: 64,
           icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill),
           onPressed: controller.togglePlayPause,
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 8),
         IconButton(
-          iconSize: 48,
+          iconSize: 44,
           icon: const Icon(Icons.skip_next),
           onPressed: controller.next,
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          iconSize: 26,
+          tooltip: repeatTooltip,
+          color: repeatMode == RepeatPlayMode.continuous ? null : accent,
+          icon: Icon(repeatIcon),
+          onPressed: () => ref.read(repeatModeProvider.notifier).cycle(),
         ),
       ],
     );
