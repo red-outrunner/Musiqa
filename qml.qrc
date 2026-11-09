@@ -1,0 +1,23 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file>components/Icon.qml</file>
+        <file>components/IconButton.qml</file>
+        <file>components/ActionButton.qml</file>
+        <file>components/CoverArt.qml</file>
+        <file>components/LibraryScrollHandler.qml</file>
+        <file>components/NowPlayingPane.qml</file>
+        <file>components/TrackMenu.qml</file>
+        <file>components/PlaylistDialog.qml</file>
+        <file>components/SongInfoDialog.qml</file>
+        <file>components/ReorderHandle.qml</file>
+        <file>components/AlbumEditorDialog.qml</file>
+        <file>components/ListeningDashboard.qml</file>
+        <file>components/MiniPlayer.qml</file>
+        <file>components/PlaybackOptions.qml</file>
+        <file>components/SleepTimerPopup.qml</file>
+        <file>components/MetadataEditor.qml</file>
+        <file>assets/musica.svg</file>
+        <file>assets/hero.svg</file>
+    </qresource>
+</RCC>

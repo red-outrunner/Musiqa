@@ -1,0 +1,21 @@
+/build/
+/build-*/
+/.local/
+*.user
+
+# Local credentials and agent state
+/.aws/
+/.codex/
+/.agents/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Generated CMake files when configuring in the source directory
+/CMakeCache.txt
+/CMakeFiles/
+/Testing/
+/cmake_install.cmake
+/Makefile

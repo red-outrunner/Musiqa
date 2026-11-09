@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Musica
+Comment=Play and rediscover your local music
+Exec=musicplayer %F
+Icon=musica
+Terminal=false
+Categories=Audio;Music;Player;AudioVideo;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/opus;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-ms-wma;
+StartupNotify=true

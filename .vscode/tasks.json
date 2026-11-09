@@ -1,0 +1,28 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Musica: Run player",
+			"type": "process",
+			"command": "${workspaceFolder}/build/musicplayer",
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": []
+		},
+		{
+			"label": "Musica: Preview and check startup",
+			"type": "shell",
+			"command": "env",
+			"args": [
+				"QT_QPA_PLATFORM=offscreen",
+				"QT_QUICK_BACKEND=software",
+				"XDG_CONFIG_HOME=${workspaceFolder}/build/preview-config",
+				"XDG_CACHE_HOME=${workspaceFolder}/build/preview-cache",
+				"${workspaceFolder}/build/musicplayer",
+				"--screenshot",
+				"${workspaceFolder}/build/musica-preview.png"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
