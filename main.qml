@@ -34,6 +34,7 @@ ApplicationWindow {
     readonly property var playbackBackend: player
     property string activePage: "Overview"
     property bool miniPlayerActive: false
+    property bool shuttingDown: false
     property string collectionName: ""
     property string collectionKind: ""
     property string collectionArtist: ""
@@ -60,11 +61,6 @@ ApplicationWindow {
     property double restorePosition: -1
     property bool desktopControlsAvailable: false
     property string pendingOpenUrl: ""
-    property string matchReferenceUrl: ""
-    property string matchMode: "both"
-    property bool matchRelatedKeys: true
-    property int matchBpmTolerance: 1
-    readonly property var matchReference: { library.trackCount; return library.trackForUrl(matchReferenceUrl); }
     signal playbackSeeked(double position)
     readonly property bool isPlaying: player.playbackState === MediaPlayer.PlayingState
     readonly property bool editingText: !!activeFocusItem && activeFocusItem.cursorPosition !== undefined
@@ -294,9 +290,7 @@ ApplicationWindow {
             infoDialog.open();
         } else if (action === "reveal")
             library.revealTrack(track.fileUrl);
-        else if (action === "analyze") { library.analyzeTracks([track.fileUrl], true); win.showToast("Analyzing tempo and key: " + track.title); }
-        else if (action === "musicalDetails" || action === "editMetadata") metadataEditor.begin(track.fileUrl);
-        else if (action === "match") openMusicalMatches(track);
+        else if (action === "editMetadata") metadataEditor.begin(track.fileUrl);
         else if (action === "trash") {
             trashDialog.track = track;
             trashDialog.open();
@@ -426,11 +420,16 @@ ApplicationWindow {
         playlistMenu.parent = anchor;
         playlistMenu.popup();
     }
-    function openMusicalMatches(track) {
-        if (!track) return;
-        navigate("Matching songs");
-        matchReferenceUrl = track.fileUrl;
-        library.analyzeTracks([track.fileUrl]);
+    function quitPlayer() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        miniPlayerActive = false;
+        miniPlayer.allowClose = true;
+        sessionSave.stop(); prepareTimer.stop();
+        player.pause();
+        persistSession();
+        miniPlayer.hide(); win.hide();
+        Qt.quit();
     }
     function openMiniPlayer() {
         miniPlayerActive = true;
@@ -454,7 +453,7 @@ ApplicationWindow {
         else if (command === "repeat") repeatMode = value;
         else if (command === "volume") { muted = false; library.volume = value; }
         else if (command === "raise") restoreMainPlayer();
-        else if (command === "quit") { persistSession(); Qt.quit(); }
+        else if (command === "quit") quitPlayer();
         else if (command === "open") {
             if (trackForUrl(value)) playUrl(value);
             else { pendingOpenUrl = value; library.addFiles([value]); }
@@ -463,14 +462,13 @@ ApplicationWindow {
     function prepareNextTrack() {
         if (!currentUrl || !queueItems.length) { player.prepareNext("", "", {}); return; }
         const current = library.trackForUrl(currentUrl);
-        player.updateAnalysis(currentUrl, current);
+        player.updateTrackInfo(currentUrl, current);
         let index = repeatMode === 2 ? currentQueueIndex : currentQueueIndex + 1;
         if (index >= queueItems.length) index = repeatMode === 1 ? 0 : -1;
         const next = index >= 0 ? queueItems[index] : null;
         player.prepareNext(next ? next.id : "", next ? next.fileUrl : "", next ? library.trackForUrl(next.fileUrl) : {});
-        library.analyzeTracks(next ? [currentUrl, next.fileUrl] : [currentUrl]);
     }
-    onClosing: { persistSession(); miniPlayerActive = false; miniPlayer.visible = false; }
+    onClosing: function(event) { event.accepted = true; quitPlayer(); }
     onVisibilityChanged: function(visibility) {
         if (miniPlayerActive && (visibility === Window.Windowed || visibility === Window.Maximized || visibility === Window.FullScreen))
             restoreMainPlayer();
@@ -542,13 +540,6 @@ ApplicationWindow {
         target: library.songs
         property: "sortKey"
         value: win.sortBy
-    }
-    Binding {
-        target: library.songs
-        property: "musicMatch"
-        value: win.activePage === "Matching songs" ? {fileUrl: win.matchReferenceUrl, bpm: win.matchReference.bpm || 0,
-            keyId: win.matchReference.keyId === undefined ? -1 : win.matchReference.keyId,
-            mode: win.matchMode, related: win.matchRelatedKeys, tolerance: win.matchBpmTolerance} : {}
     }
     Binding {
         target: library.albums
@@ -696,6 +687,7 @@ ApplicationWindow {
         player: win.playbackBackend
         playing: win.isPlaying
         onRestoreRequested: win.restoreMainPlayer()
+        onQuitRequested: win.quitPlayer()
         onVisibleChanged: if (win.miniPlayerActive && !visible) win.restoreMainPlayer()
         onToggleRequested: win.togglePlayback()
         onNextRequested: win.nextTrack(false)
@@ -828,6 +820,11 @@ ApplicationWindow {
         defaultSuffix: "m3u8"
         nameFilters: ["M3U8 playlist (*.m3u8)", "M3U playlist (*.m3u)"]
         onAccepted: { if (library.exportPlaylist(playlistMenu.playlist.id, selectedFile)) win.showToast("Playlist exported."); }
+    }
+    Shortcut {
+        sequence: "Ctrl+Q"
+        context: Qt.ApplicationShortcut
+        onActivated: win.quitPlayer()
     }
     Shortcut {
         sequence: "Ctrl+M"
@@ -1358,7 +1355,7 @@ ApplicationWindow {
                         Layout.minimumWidth: 0
                         spacing: 7
                         Text {
-                            text: library.analyzing ? library.analysisStatus.toUpperCase() : library.scanning || library.metadataFailures > 0 ? library.scanStatus.toUpperCase() : win.activePage === "Overview" ? "PRESS PLAY. FEEL AT HOME." : "YOUR MUSIC, YOUR WAY"
+                            text: library.scanning || library.metadataFailures > 0 ? library.scanStatus.toUpperCase() : win.activePage === "Overview" ? "PRESS PLAY. FEEL AT HOME." : "YOUR MUSIC, YOUR WAY"
                             color: "#7f9485"
                             font.pixelSize: 9
                             font.weight: Font.DemiBold
@@ -1390,17 +1387,6 @@ ApplicationWindow {
                         text: "Manage albums"
                         primary: false
                         onClicked: albumEditor.start(win.collectionKind === "album" && win.collectionName ? win.collectionId : "")
-                    }
-                    IconButton {
-                        objectName: "analyzeLibraryButton"
-                        visible: win.activePage === "Songs" || win.activePage === "Matching songs"
-                        symbol: library.analyzing ? "close" : "analyze"
-                        label: library.analyzing ? library.analysisStatus + " · Click to cancel" : "Analyze library BPM and key"
-                        glyphColor: library.analyzing ? win.accent : "#8f9c96"
-                        onClicked: {
-                            if (library.analyzing) library.cancelAnalysis();
-                            else { library.analyzeTracks([]); win.showToast("Analyzing your library locally. You can keep listening and browsing."); }
-                        }
                     }
                     ActionButton {
                         objectName: "importPlaylistButton"
@@ -1827,39 +1813,10 @@ ApplicationWindow {
                 }
 
                 ColumnLayout {
-                    id: matchControls
-                    visible: win.activePage === "Matching songs"
-                    Layout.fillWidth: true
-                    spacing: 10
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "Match “" + (win.matchReference.title || "") + "” · " + (win.matchReference.bpm ? win.matchReference.bpm + " BPM" : "Tempo unknown") + " · " + (win.matchReference.musicalKey || "Key unknown") + (win.matchReference.camelot ? " · " + win.matchReference.camelot : "")
-                            color: "#a7e8cb"; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
-                        }
-                        IconButton { objectName: "editMatchReferenceButton"; symbol: "more"; label: "Edit reference metadata, BPM, and key"; onClicked: metadataEditor.begin(win.matchReferenceUrl) }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        ComboBox {
-                            objectName: "musicalMatchMode"
-                            Layout.fillWidth: true
-                            model: ["BPM and key", "BPM only", "Key only", "BPM or key"]
-                            currentIndex: ["both", "bpm", "key", "either"].indexOf(win.matchMode)
-                            onActivated: win.matchMode = ["both", "bpm", "key", "either"][currentIndex]
-                            Accessible.name: "Musical matching criteria"
-                        }
-                        CheckBox { objectName: "relatedKeyCheckBox"; text: "Related keys"; checked: win.matchRelatedKeys; onToggled: win.matchRelatedKeys = checked }
-                        Text { text: "± BPM"; color: "#8ba392"; font.pixelSize: 11 }
-                        SpinBox { objectName: "matchBpmToleranceBox"; from: 0; to: 10; value: win.matchBpmTolerance; onValueModified: win.matchBpmTolerance = value; Accessible.name: "BPM tolerance, 0 matches rounded BPM exactly" }
-                    }
-                    Text { text: library.analyzing ? library.analysisStatus : "Use the waveform button to analyze more songs. Unknown BPM or key won't match that criterion."; color: "#7e9585"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                }
-                ColumnLayout {
                     id: songsSection
                     Layout.fillWidth: true
                     spacing: 15
-                    visible: win.activePage === "Overview" || win.activePage === "Songs" || win.activePage === "Matching songs" || win.activePage === "Favorites" || win.activePage === "Most Played" || win.collectionName.length > 0 || ((win.activePage === "Albums" || win.activePage === "Artists" || win.activePage === "Playlists") && win.visibleGroups.count === 0)
+                    visible: win.activePage === "Overview" || win.activePage === "Songs" || win.activePage === "Favorites" || win.activePage === "Most Played" || win.collectionName.length > 0 || ((win.activePage === "Albums" || win.activePage === "Artists" || win.activePage === "Playlists") && win.visibleGroups.count === 0)
                     RowLayout {
                         id: songActions
                         Layout.fillWidth: true
@@ -1969,7 +1926,8 @@ ApplicationWindow {
                             visible: win.width > 980
                         }
                         Text {
-                            text: win.activePage === "Most Played" ? "PLAYS" : "BPM / KEY"
+                            text: "PLAYS"
+                            visible: win.activePage === "Most Played"
                             color: "#6b8272"
                             font.pixelSize: 9
                             font.letterSpacing: 1.3
@@ -1998,7 +1956,7 @@ ApplicationWindow {
                         id: songList
                         objectName: "songList"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: win.visibleTracks.count === 0 ? 0 : win.activePage === "Overview" ? Math.min(contentHeight, 390) : Math.max(0, contentScroll.height - pageHeading.implicitHeight - contentColumn.spacing - songActions.implicitHeight - songColumns.implicitHeight - 1 - songsSection.spacing * 3 - (matchControls.visible ? matchControls.implicitHeight + contentColumn.spacing : 0))
+                        Layout.preferredHeight: win.visibleTracks.count === 0 ? 0 : win.activePage === "Overview" ? Math.min(contentHeight, 390) : Math.max(0, contentScroll.height - pageHeading.implicitHeight - contentColumn.spacing - songActions.implicitHeight - songColumns.implicitHeight - 1 - songsSection.spacing * 3)
                         interactive: win.activePage !== "Overview"
                         flickableDirection: Flickable.VerticalFlick
                         maximumFlickVelocity: 12000
@@ -2129,7 +2087,8 @@ ApplicationWindow {
                                     visible: win.width > 980
                                 }
                                 Text {
-                                    text: win.activePage === "Most Played" ? songRow.modelData.playCount : (songRow.modelData.bpm ? String(songRow.modelData.bpm) : "—") + " · " + (songRow.modelData.camelot || "—")
+                                    text: songRow.modelData.playCount
+                                    visible: win.activePage === "Most Played"
                                     color: "#6e8977"
                                     font.pixelSize: 9
                                     Layout.preferredWidth: 84
@@ -2179,14 +2138,14 @@ ApplicationWindow {
                             Layout.alignment: Qt.AlignHCenter
                         }
                         Text {
-                            text: library.scanning ? library.scanStatus : win.searchQuery ? "No matching music" : win.activePage === "Matching songs" ? "No musical matches yet" : win.activePage === "Most Played" ? "Your most-played songs will live here" : win.activePage === "Playlists" ? (win.collectionName ? "This playlist is waiting for a song" : "Your next playlist starts here") : win.activePage === "Favorites" ? "A home for your favorites" : "Your next favorite is already out there."
+                            text: library.scanning ? library.scanStatus : win.searchQuery ? "No matching music" : win.activePage === "Most Played" ? "Your most-played songs will live here" : win.activePage === "Playlists" ? (win.collectionName ? "This playlist is waiting for a song" : "Your next playlist starts here") : win.activePage === "Favorites" ? "A home for your favorites" : "Your next favorite is already out there."
                             color: "#c1d0c4"
                             font.pixelSize: 13
                             font.weight: Font.Medium
                             Layout.alignment: Qt.AlignHCenter
                         }
                         Text {
-                            text: win.searchQuery ? "Try another song, artist, or album." : win.activePage === "Matching songs" ? "Analyze more songs or adjust the BPM tolerance and key matching." : win.activePage === "Most Played" ? "Play at least 50% of a song to add a listen." : win.activePage === "Playlists" ? "Use a song's three-dot menu to add it to a playlist." : win.activePage === "Favorites" ? "Tap the heart beside a song to keep it here." : "Add your music to get started. MP3, FLAC, WAV, and more."
+                            text: win.searchQuery ? "Try another song, artist, or album." : win.activePage === "Most Played" ? "Play at least 50% of a song to add a listen." : win.activePage === "Playlists" ? "Use a song's three-dot menu to add it to a playlist." : win.activePage === "Favorites" ? "Tap the heart beside a song to keep it here." : "Add your music to get started. MP3, FLAC, WAV, and more."
                             color: "#789282"
                             font.pixelSize: 11
                             Layout.alignment: Qt.AlignHCenter
@@ -2318,16 +2277,6 @@ ApplicationWindow {
                     }
                     background: Item {}
                     onClicked: win.openArtist(win.currentTrack)
-                }
-                Button {
-                    objectName: "footerMusicalMatches"
-                    Layout.fillWidth: true
-                    padding: 0
-                    enabled: !!win.currentTrack
-                    Accessible.name: "Find songs with matching tempo and key"
-                    contentItem: Text { text: win.currentTrack && (win.currentTrack.bpm || win.currentTrack.camelot) ? (win.currentTrack.bpm ? win.currentTrack.bpm + " BPM" : "— BPM") + " · " + (win.currentTrack.camelot || "—") : "BPM / key matches"; color: "#719e84"; font.pixelSize: 9; elide: Text.ElideRight }
-                    background: Item {}
-                    onClicked: win.openMusicalMatches(win.currentTrack)
                 }
             }
             IconButton {

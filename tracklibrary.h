@@ -9,7 +9,6 @@
 #include <QVariantList>
 #include "librarymodels.h"
 #include "listeninghistory.h"
-#include "audioanalysis.h"
 
 class TrackListModel : public QObject
 {
@@ -33,9 +32,6 @@ class TrackListModel : public QObject
     Q_PROPERTY(bool canUndoAlbumEdit READ canUndoAlbumEdit NOTIFY albumEditsChanged)
     Q_PROPERTY(bool libraryReady READ libraryReady NOTIFY libraryReadyChanged)
     Q_PROPERTY(QVariantList smartPlaylists READ smartPlaylists NOTIFY tracksChanged)
-    Q_PROPERTY(bool analyzing READ analyzing NOTIFY analysisChanged)
-    Q_PROPERTY(QString analysisStatus READ analysisStatus NOTIFY analysisChanged)
-    Q_PROPERTY(QVariantList musicalKeys READ musicalKeys CONSTANT)
     Q_PROPERTY(bool metadataBusy READ metadataBusy NOTIFY metadataBusyChanged)
 
 public:
@@ -64,15 +60,9 @@ public:
     bool canUndoAlbumEdit() const { return !m_albumUndo.isEmpty(); }
     bool libraryReady() const { return m_libraryReady; }
     QVariantList smartPlaylists() const;
-    bool analyzing() const { return m_analysisActive || !m_analysisQueue.isEmpty(); }
-    QString analysisStatus() const;
-    QVariantList musicalKeys() const;
     bool metadataBusy() const { return m_metadataBusy; }
     Q_INVOKABLE void loadSongMetadata(const QString &url);
     Q_INVOKABLE bool saveSongMetadata(const QString &url, const QVariantMap &changes, const QString &coverAction, const QUrl &coverFile, const QString &revision);
-    Q_INVOKABLE void analyzeTracks(const QStringList &urls = {}, bool force = false);
-    Q_INVOKABLE void cancelAnalysis();
-    bool setMusicalDetails(const QString &url, double bpm, int key, double beatOffset);
     Q_INVOKABLE void observeAudiblePlayback(const QString &token, const QString &url, qint64 position, qint64 duration, bool playing, bool finished, qint64 timestamp);
     Q_INVOKABLE void seekAudiblePlayback(const QString &token, qint64 position, qint64 timestamp);
     Q_INVOKABLE QVariantList albumOptions() const;
@@ -116,7 +106,6 @@ signals:
     void historyChanged();
     void albumEditsChanged();
     void libraryReadyChanged();
-    void analysisChanged();
     void metadataBusyChanged();
     void metadataLoaded(const QVariantMap &details);
     void metadataSaved(const QString &url);
@@ -130,7 +119,6 @@ private:
     void publishUpdates();
     void saveSettings();
     void collectListening(const QString &url, qint64 audibleMs, bool qualified, const QString &session = {});
-    void analyzeNext();
     void applyAlbumOverrides();
     void initializeMetadataEditing();
     QString albumSignature() const;
@@ -165,13 +153,6 @@ private:
     QStringList m_files;
     QStringList m_favorites;
     QVariantMap m_metadataCache;
-    QVariantMap m_analysisCache;
-    AudioAnalyzer m_analyzer;
-    QStringList m_analysisQueue;
-    QString m_analysisUrl;
-    qint64 m_analysisModified = 0, m_analysisSize = 0;
-    bool m_analysisActive = false;
-    int m_analysisDone = 0, m_analysisTotal = 0;
     struct AudibleSession { ListeningSession coverage; QElapsedTimer clock; };
     QHash<QString, AudibleSession> m_audibleSessions;
     QFutureWatcher<QVariantMap> m_metadataWatcher;

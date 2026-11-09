@@ -1,5 +1,4 @@
 #include "filetags.h"
-#include "audioanalysis.h"
 
 #include <audioproperties.h>
 #include <fileref.h>
@@ -45,8 +44,7 @@ bool frontCover(const TagLib::VariantMap &picture)
 QByteArray bytes(const TagLib::ByteVector &data) { return QByteArray(data.data(), qsizetype(data.size())); }
 QVariantMap failure(const QString &message) { return {{"error", message}}; }
 const QMap<QString, QString> textFields{{"title", "TITLE"}, {"artist", "ARTIST"}, {"album", "ALBUM"}, {"albumArtist", "ALBUMARTIST"},
-    {"genre", "GENRE"}, {"date", "DATE"}, {"composer", "COMPOSER"}, {"comment", "COMMENT"}, {"bpm", "BPM"},
-    {"initialKey", "INITIALKEY"}, {"beatOffset", "MUSICA_BEAT_OFFSET"}};
+    {"genre", "GENRE"}, {"date", "DATE"}, {"composer", "COMPOSER"}, {"comment", "COMMENT"}};
 QString first(const TagLib::PropertyMap &properties, const QString &key)
 {
     const auto values = properties.value(tagString(key));
@@ -138,7 +136,7 @@ QVariantMap readImpl(const QString &path, const QString &artworkDirectory, bool 
         {"format", info.suffix().toUpper()}, {"writable", info.isWritable() && QFileInfo(info.absolutePath()).isWritable()},
         {"modified", info.lastModified().toMSecsSinceEpoch()}, {"size", info.size()}, {"embeddedCover", !pictures.isEmpty()},
         {"coverHash", QString::fromLatin1(QCryptographicHash::hash(cover, QCryptographicHash::Sha256).toHex())},
-        {"artwork", cacheCover(cover, artworkDirectory)}, {"tagVersion", FileTags::Version}, {"keyId", MusicAnalysis::parseKey(fields.value("initialKey").toString())}};
+        {"artwork", cacheCover(cover, artworkDirectory)}, {"tagVersion", FileTags::Version}};
     if (auto *audio = file.audioProperties()) {
         result["duration"] = audio->lengthInMilliseconds(); result["sampleRate"] = audio->sampleRate(); result["channels"] = audio->channels();
     }
@@ -146,12 +144,6 @@ QVariantMap readImpl(const QString &path, const QString &artworkDirectory, bool 
     if (withFingerprint && result.value("revision").toString().isEmpty()) return failure(QStringLiteral("Couldn't read a complete revision of the song."));
     return result;
 }
-}
-
-QString FileTags::portableKey(int key)
-{
-    static const QStringList names{"C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
-    return key < 0 || key >= 24 ? QString() : names[key % 12] + (key >= 12 ? QStringLiteral("m") : QString());
 }
 
 QVariantMap FileTags::read(const QString &path, const QString &directory, bool withFingerprint)
@@ -181,11 +173,6 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
         if (QStringList{"trackNumber", "trackTotal", "discNumber", "discTotal"}.contains(it.key()) && !value.isEmpty()) {
             bool ok = false; const int number = value.toInt(&ok);
             if (!ok || number < 0 || number > 9999) return failure(QStringLiteral("Track and disc numbers must be 0–9999, or blank."));
-        }
-        if (it.key() == "bpm" || it.key() == "beatOffset") {
-            bool ok = value.isEmpty(); const double number = value.isEmpty() ? 0 : value.toDouble(&ok);
-            if (!ok || !std::isfinite(number) || number < 0 || (it.key() == "bpm" ? number != 0 && (number < 30 || number > 300) : number > 10))
-                return failure(QStringLiteral("Use 30–300 BPM (or 0 for unknown), and a beat offset of 0–10 seconds."));
         }
         normalized[it.key()] = value;
     }
@@ -237,7 +224,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
         for (auto it = normalized.cbegin(); it != normalized.cend(); ++it) {
             if (!textFields.contains(it.key())) continue;
             const auto key = tagString(textFields.value(it.key())); const QString value = it.value().toString();
-            if (value.isEmpty() || (it.key() == "bpm" && value.toDouble() == 0)) properties.erase(key);
+            if (value.isEmpty()) properties.erase(key);
             else properties.replace(key, TagLib::StringList(tagString(value)));
         }
         const auto oldFields = before.value("fields").toMap();
@@ -259,7 +246,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
             const auto attributes = static_cast<const TagLib::ASF::Tag *>(asf->tag())->attributeListMap();
             const QMap<QString, QString> aliases{{"title", "title"}, {"author", "artist"}, {"artist", "artist"}, {"albumtitle", "album"}, {"album", "album"},
                 {"albumartist", "albumArtist"}, {"genre", "genre"}, {"year", "date"}, {"date", "date"}, {"composer", "composer"},
-                {"description", "comment"}, {"comment", "comment"}, {"beatsperminute", "bpm"}, {"bpm", "bpm"}, {"initialkey", "initialKey"}};
+                {"description", "comment"}, {"comment", "comment"}};
             for (auto it = attributes.begin(); it != attributes.end(); ++it) {
                 auto name = qstring(it->first).toLower().remove(QStringLiteral("wm/")).remove(QLatin1Char('_'));
                 const auto field = aliases.value(name);
@@ -318,7 +305,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
     const auto verifiedFields = verified.value("fields").toMap();
     for (auto it = normalized.cbegin(); it != normalized.cend(); ++it) {
         const QString expected = it.value().toString(), actual = verifiedFields.value(it.key()).toString();
-        const bool numeric = QStringList{"bpm", "beatOffset", "trackNumber", "trackTotal", "discNumber", "discTotal"}.contains(it.key());
+        const bool numeric = QStringList{"trackNumber", "trackTotal", "discNumber", "discTotal"}.contains(it.key());
         if ((numeric ? std::abs(expected.toDouble() - actual.toDouble()) > 0.001 : expected != actual))
             return failure(QStringLiteral("The format couldn't retain the edited %1 value. The original was kept.").arg(it.key()));
     }
@@ -362,10 +349,6 @@ void FileTags::applyToTrack(QVariantMap &track, const QVariantMap &tags, bool cl
         if (value.isEmpty()) track.remove(key); else track[key] = value;
         track[kind + "Total"] = fields.value(kind + "Total").toString().toInt();
     }
-    track["tagBpm"] = fields.value("bpm").toString().toDouble();
-    track["tagKeyId"] = MusicAnalysis::parseKey(fields.value("initialKey").toString());
-    track.remove("tagBeatOffset");
-    if (!fields.value("beatOffset").toString().isEmpty()) track["tagBeatOffset"] = fields.value("beatOffset").toString().toDouble();
     if (tags.value("duration").toLongLong() > 0) track["duration"] = tags.value("duration");
     if (!tags.value("artwork").toString().isEmpty()) {
         track["artwork"] = tags.value("artwork");

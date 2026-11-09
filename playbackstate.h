@@ -20,7 +20,7 @@ struct PlaybackSnapshot {
     qint64 position = 0, duration = 0, sleepRemainingMs = 0;
     QMediaPlayer::PlaybackState state = QMediaPlayer::StoppedState;
     QMediaPlayer::MediaStatus status = QMediaPlayer::NoMedia;
-    bool gapless = true, crossfade = false, quantize = false, crossfading = false;
+    bool gapless = true, crossfade = false, crossfading = false;
     bool sleepAfterTrack = false;
     double crossfadeSeconds = 5;
 };

@@ -1,5 +1,4 @@
 #include "audiomixer.h"
-#include "audioanalysis.h"
 
 #include <QAudioBuffer>
 #include <QDir>
@@ -23,7 +22,6 @@ PcmTrack::~PcmTrack()
 
 void PcmTrack::setInfo(const QVariantMap &info)
 {
-    analysis = info;
     if (info.value("duration").toLongLong() > 0) m_estimatedFrames = info.value("duration").toLongLong() * format.sampleRate() / 1000;
 }
 
@@ -120,30 +118,12 @@ MixerEvent AudioMixer::event(MixerEvent::Kind kind, const Voice &voice, qint64 o
         voice.track ? voice.track->durationFrames() : 0, voice.track};
 }
 
-QPair<qint64, qint64> AudioMixer::transitionPlan(const PcmTrack &from, const PcmTrack &to, double seconds, bool quantized, qint64 position)
+QPair<qint64, qint64> AudioMixer::transitionPlan(const PcmTrack &from, const PcmTrack &to, double seconds)
 {
-    const int rate = from.format.sampleRate();
-    const qint64 length = from.durationFrames();
-    qint64 start = qMax<qint64>(0, length - qRound64(qBound(0.0, seconds, 70.0) * rate));
-    qint64 incoming = 0;
-    const auto bpm = from.analysis.value("bpm").toDouble();
-    if (quantized && bpm > 0 && from.analysis.value("bpmConfidence", 1).toDouble() >= 0.15) {
-        const double offset = from.analysis.value("beatOffset").toDouble();
-        start = qRound64(MusicAnalysis::nearestBeat(double(start) / rate, bpm, offset) * rate);
-        if (start < position) start += qRound64(std::ceil(double(position - start) / (rate * 60.0 / bpm)) * rate * 60.0 / bpm);
-    }
-    const auto incomingBpm = to.analysis.value("bpm").toDouble();
-    if (quantized && incomingBpm > 0 && to.analysis.value("bpmConfidence", 1).toDouble() >= 0.15)
-        incoming = qRound64(qMax(0.0, to.analysis.value("beatOffset").toDouble()) * rate);
-    incoming = qMin(incoming, qMax<qint64>(0, to.durationFrames() - 1));
-    // Leave at least one frame after the fade; very short tracks reduce the overlap.
-    const qint64 minimumStart = qMax<qint64>(0, qMax(length - 70LL * rate, length - qMax<qint64>(0, to.durationFrames() - incoming - 1)));
-    if (start < minimumStart && quantized && bpm > 0 && from.analysis.value("bpmConfidence", 1).toDouble() >= 0.15) {
-        const double beat = rate * 60.0 / bpm;
-        start += qRound64(std::ceil((minimumStart - start) / beat) * beat);
-    }
-    start = qMax(start, minimumStart);
-    return {qBound<qint64>(0, start, length), incoming};
+    const auto requested = qRound64(qBound(0.0, seconds, 70.0) * from.format.sampleRate());
+    // Leave at least one frame in the incoming track after the overlap.
+    const auto length = qMin(requested, qMin(from.durationFrames(), qMax<qint64>(0, to.durationFrames() - 1)));
+    return {from.durationFrames() - length, 0};
 }
 
 MixerBlock AudioMixer::render(int requested)
@@ -156,7 +136,7 @@ MixerBlock AudioMixer::render(int requested)
     if (m_startPending) { block.events.append(event(MixerEvent::Started, m_current, 0)); m_startPending = false; }
     while (rendered < requested && m_current.track) {
         if (!m_outgoing.track && !stopAfterCurrent && crossfadeSeconds > 0 && m_next.track && m_current.track->complete && m_next.track->complete) {
-            const auto plan = transitionPlan(*m_current.track, *m_next.track, crossfadeSeconds, quantize, m_current.frame);
+            const auto plan = transitionPlan(*m_current.track, *m_next.track, crossfadeSeconds);
             if (m_current.frame >= plan.first && m_current.frame < m_current.track->frames()) {
                 m_outgoing = m_current; m_current = m_next; m_next = {};
                 m_current.frame = plan.second;
@@ -178,7 +158,7 @@ MixerBlock AudioMixer::render(int requested)
         int count = int(qMin<qint64>(requested - rendered, m_current.track->frames() - m_current.frame));
         if (m_outgoing.track) count = int(qMin<qint64>(count, m_outgoing.track->frames() - m_outgoing.frame));
         else if (!stopAfterCurrent && crossfadeSeconds > 0 && m_next.track && m_current.track->complete && m_next.track->complete) {
-            const auto plan = transitionPlan(*m_current.track, *m_next.track, crossfadeSeconds, quantize, m_current.frame);
+            const auto plan = transitionPlan(*m_current.track, *m_next.track, crossfadeSeconds);
             if (plan.first > m_current.frame) count = int(qMin<qint64>(count, plan.first - m_current.frame));
         }
         if (count <= 0) { block.waiting = true; break; }

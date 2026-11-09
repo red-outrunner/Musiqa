@@ -24,7 +24,6 @@ class PlaybackEngine : public QObject
     Q_PROPERTY(bool gaplessEnabled READ gaplessEnabled WRITE setGaplessEnabled NOTIFY optionsChanged)
     Q_PROPERTY(bool crossfadeEnabled READ crossfadeEnabled WRITE setCrossfadeEnabled NOTIFY optionsChanged)
     Q_PROPERTY(double crossfadeSeconds READ crossfadeSeconds WRITE setCrossfadeSeconds NOTIFY optionsChanged)
-    Q_PROPERTY(bool quantizeFade READ quantizeFade WRITE setQuantizeFade NOTIFY optionsChanged)
     Q_PROPERTY(bool crossfading READ crossfading NOTIFY transitionChanged)
     Q_PROPERTY(qint64 sleepRemainingMs READ sleepRemainingMs NOTIFY sleepChanged)
     Q_PROPERTY(bool sleepAfterTrack READ sleepAfterTrack NOTIFY sleepChanged)
@@ -43,19 +42,17 @@ public:
     bool gaplessEnabled() const { return m_snapshot.gapless; }
     bool crossfadeEnabled() const { return m_snapshot.crossfade; }
     double crossfadeSeconds() const { return m_snapshot.crossfadeSeconds; }
-    bool quantizeFade() const { return m_snapshot.quantize; }
     bool crossfading() const { return m_snapshot.crossfading; }
     void setGaplessEnabled(bool value);
     void setCrossfadeEnabled(bool value);
     void setCrossfadeSeconds(double value);
-    void setQuantizeFade(bool value);
     qint64 sleepRemainingMs() const;
     bool sleepAfterTrack() const { return m_snapshot.sleepAfterTrack; }
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
-    Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &analysis = {});
-    Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &analysis = {});
-    Q_INVOKABLE void updateAnalysis(const QUrl &url, const QVariantMap &analysis);
+    Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    Q_INVOKABLE void updateTrackInfo(const QUrl &url, const QVariantMap &info);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();

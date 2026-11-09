@@ -120,8 +120,7 @@ Dialog {
                             {key: "albumArtist", label: "Album artist / collective"}, {key: "genre", label: "Genre"},
                             {key: "date", label: "Release date / year"}, {key: "composer", label: "Composer"},
                             {key: "trackNumber", label: "Track number"}, {key: "trackTotal", label: "Total tracks"},
-                            {key: "discNumber", label: "Disc number"}, {key: "discTotal", label: "Total discs"}, {key: "bpm", label: "BPM · 0 or blank clears the tag"},
-                            {key: "beatOffset", label: "Beat offset (seconds) · optional"}
+                            {key: "discNumber", label: "Disc number"}, {key: "discTotal", label: "Total discs"}
                         ]
                         delegate: ColumnLayout {
                             required property var modelData
@@ -140,22 +139,6 @@ Dialog {
                             }
                         }
                     }
-                    Text { text: "Musical key"; color: "#93ac9c"; font.pixelSize: 11 }
-                    ComboBox {
-                        objectName: "metadataKeyBox"
-                        Layout.fillWidth: true
-                        model: root.library.musicalKeys
-                        textRole: "label"
-                        valueRole: "nativeValue"
-                        currentIndex: {
-                            const value = (root.initial.fields || {}).initialKey || "";
-                            const key = root.initial.keyId === undefined ? -1 : root.initial.keyId;
-                            return Math.max(0, root.library.musicalKeys.findIndex(item => item.id === key));
-                        }
-                        onActivated: root.edit("initialKey", currentValue)
-                        Accessible.name: "Embedded musical key"
-                    }
-                    Text { visible: !!(root.initial.fields || {}).initialKey; text: "Stored key: " + ((root.initial.fields || {}).initialKey || ""); color: "#7e9585"; font.pixelSize: 10 }
                     Text { text: "Comment"; color: "#93ac9c"; font.pixelSize: 11 }
                     TextArea {
                         objectName: "metadata_comment"

@@ -51,12 +51,11 @@ PlaybackEngine::PlaybackEngine(QObject *parent) : QObject(parent), m_controls(th
     const bool gapless = m_settings.value("playback/gapless", true).toBool();
     const bool crossfade = m_settings.value("playback/crossfade", false).toBool();
     const double seconds = m_settings.value("playback/fadeSeconds", 5).toDouble();
-    const bool quantize = m_settings.value("playback/quantize", false).toBool();
-    dispatch([this, gapless, crossfade, seconds, quantize] {
+    m_settings.remove("playback/quantize");
+    dispatch([this, gapless, crossfade, seconds] {
         m_worker->setGaplessEnabled(gapless);
         m_worker->setCrossfadeEnabled(crossfade);
         m_worker->setCrossfadeSeconds(seconds);
-        m_worker->setQuantizeFade(quantize);
     });
     connect(&m_controls, &QAudioOutput::volumeChanged, this, &PlaybackEngine::updateVolume);
     connect(&m_controls, &QAudioOutput::mutedChanged, this, &PlaybackEngine::updateVolume);
@@ -98,7 +97,7 @@ void PlaybackEngine::applySnapshot(const PlaybackSnapshot &state)
     if (old.state != state.state) emit playbackStateChanged();
     if (old.status != state.status) emit mediaStatusChanged();
     if (old.gapless != state.gapless || old.crossfade != state.crossfade
-        || old.crossfadeSeconds != state.crossfadeSeconds || old.quantize != state.quantize) emit optionsChanged();
+        || old.crossfadeSeconds != state.crossfadeSeconds) emit optionsChanged();
     if (old.crossfading != state.crossfading) emit transitionChanged();
     if (old.sleepRevision != state.sleepRevision) emit sleepChanged();
 }
@@ -136,25 +135,20 @@ void PlaybackEngine::setCrossfadeSeconds(double value)
     dispatch([this, value] { m_worker->setCrossfadeSeconds(value); });
     m_settings.setValue("playback/fadeSeconds", m_snapshot.crossfadeSeconds);
 }
-void PlaybackEngine::setQuantizeFade(bool value)
-{
-    dispatch([this, value] { m_worker->setQuantizeFade(value); });
-    m_settings.setValue("playback/quantize", m_snapshot.quantize);
-}
 void PlaybackEngine::setEntryId(const QString &id) { dispatch([this, id] { m_worker->setEntryId(id); }); }
 void PlaybackEngine::setSource(const QUrl &url) { dispatch([this, url] { m_worker->setSource(url); }); }
 void PlaybackEngine::setPosition(qint64 position) { dispatch([this, position] { m_worker->setPosition(position); }); }
-void PlaybackEngine::playEntry(const QString &id, const QUrl &url, const QVariantMap &analysis)
+void PlaybackEngine::playEntry(const QString &id, const QUrl &url, const QVariantMap &info)
 {
-    dispatch([this, id, url, analysis] { m_worker->playEntry(id, url, analysis); });
+    dispatch([this, id, url, info] { m_worker->playEntry(id, url, info); });
 }
-void PlaybackEngine::prepareNext(const QString &id, const QUrl &url, const QVariantMap &analysis)
+void PlaybackEngine::prepareNext(const QString &id, const QUrl &url, const QVariantMap &info)
 {
-    dispatch([this, id, url, analysis] { m_worker->prepareNext(id, url, analysis); });
+    dispatch([this, id, url, info] { m_worker->prepareNext(id, url, info); });
 }
-void PlaybackEngine::updateAnalysis(const QUrl &url, const QVariantMap &analysis)
+void PlaybackEngine::updateTrackInfo(const QUrl &url, const QVariantMap &info)
 {
-    dispatch([this, url, analysis] { m_worker->updateAnalysis(url, analysis); });
+    dispatch([this, url, info] { m_worker->updateTrackInfo(url, info); });
 }
 void PlaybackEngine::play() { dispatch([this] { m_worker->play(); }); }
 void PlaybackEngine::pause() { dispatch([this] { m_worker->pause(); }); }

@@ -25,19 +25,17 @@ public:
     bool gaplessEnabled() const { return m_gapless; }
     bool crossfadeEnabled() const { return m_crossfade; }
     double crossfadeSeconds() const { return m_crossfadeSeconds; }
-    bool quantizeFade() const { return m_quantize; }
     bool crossfading() const { return m_liveVoices.size() > 1; }
     void setGaplessEnabled(bool value);
     void setCrossfadeEnabled(bool value);
     void setCrossfadeSeconds(double value);
-    void setQuantizeFade(bool value);
     qint64 sleepRemainingMs() const;
     bool sleepAfterTrack() const { return m_sleepAfterTrack; }
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
-    Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &analysis = {});
-    Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &analysis = {});
-    Q_INVOKABLE void updateAnalysis(const QUrl &url, const QVariantMap &analysis);
+    Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    Q_INVOKABLE void updateTrackInfo(const QUrl &url, const QVariantMap &info);
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
@@ -100,7 +98,7 @@ private:
     qint64 m_audioOrigin = 0, m_pausedAt = 0;
     qint64 m_sleepLength = 0;
     bool m_sleepAfterTrack = false;
-    bool m_gapless = true, m_crossfade = false, m_quantize = false;
+    bool m_gapless = true, m_crossfade = false;
     double m_crossfadeSeconds = 5;
     float m_volume = 1;
     quint64 m_revision = 0, m_generation = 0, m_sleepRevision = 0;

@@ -62,14 +62,6 @@ Dialog {
                         value: root.details.genre
                     },
                     {
-                        label: "TEMPO / MUSICAL KEY",
-                        value: (root.details.bpm ? root.details.bpm + " BPM" : "BPM unknown") + " · " + (root.details.musicalKey || "Key unknown") + (root.details.camelot ? " · " + root.details.camelot : "")
-                    },
-                    {
-                        label: "ANALYSIS",
-                        value: root.details.analysisNote || "Use Tempo & key in the song menu to analyze or edit."
-                    },
-                    {
                         label: "QUALIFIED PLAYS",
                         value: String(root.details.playCount || 0)
                     },

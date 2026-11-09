@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(MusicPlayerApp VERSION 4.1.3 LANGUAGES CXX)
+project(MusicPlayerApp VERSION 4.2.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -37,7 +37,7 @@ else()
 endif()
 
 add_library(musica_library STATIC tracklibrary.cpp tracklibrary.h libraryfeatures.cpp librarymodels.cpp librarymodels.h albumgrouping.cpp albumgrouping.h listeninghistory.cpp listeninghistory.h mprisservice.cpp mprisservice.h)
-target_sources(musica_library PRIVATE audioanalysis.cpp audioanalysis.h musiclibrary.cpp audiomixer.cpp audiomixer.h playbackengine.cpp playbackengine.h)
+target_sources(musica_library PRIVATE musiclibrary.cpp audiomixer.cpp audiomixer.h playbackengine.cpp playbackengine.h)
 target_sources(musica_library PRIVATE playbackworker.cpp playbackworker.h playbackstate.h)
 target_sources(musica_library PRIVATE filetags.cpp filetags.h metadataediting.cpp)
 target_link_libraries(musica_library PUBLIC Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Concurrent Qt6::DBus)
@@ -55,7 +55,10 @@ target_compile_definitions(musicplayer PRIVATE MUSICA_VERSION="${PROJECT_VERSION
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_executable(musica_close_probe tests/windowcloseprobe.cpp qml.qrc)
+    target_link_libraries(musica_close_probe PRIVATE musica_library Qt6::Qml Qt6::Quick Qt6::QuickControls2)
     add_executable(musica_tests tests/tst_musica.cpp qml.qrc)
+    add_dependencies(musica_tests musica_close_probe)
     target_link_libraries(musica_tests PRIVATE musica_library Qt6::Test Qt6::Qml Qt6::Quick Qt6::QuickControls2)
     add_test(NAME musica_tests COMMAND musica_tests)
     set_tests_properties(musica_tests PROPERTIES

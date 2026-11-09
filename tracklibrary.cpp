@@ -200,21 +200,7 @@ void TrackListModel::initialize(bool autoScan)
     m_files = m_settings.value(QStringLiteral("library/files")).toStringList();
     m_favorites = m_settings.value(QStringLiteral("library/favorites")).toStringList();
     m_metadataCache = m_settings.value(QStringLiteral("library/metadata")).toMap();
-    m_analysisCache = m_settings.value(QStringLiteral("library/analysis")).toMap();
-    connect(&m_analyzer, &AudioAnalyzer::completed, this, [this](const QUrl &url, const QVariantMap &result) {
-        if (!m_analysisActive || url.toString() != m_analysisUrl) return;
-        const auto track = trackForUrl(m_analysisUrl);
-        if (!track.isEmpty() && track.value("modified").toLongLong() == m_analysisModified && track.value("size").toLongLong() == m_analysisSize
-            && !m_analysisCache.value(m_analysisUrl).toMap().value("manual").toBool()) {
-            auto analysis = result;
-            analysis["modified"] = m_analysisModified; analysis["size"] = m_analysisSize;
-            m_analysisCache[m_analysisUrl] = analysis;
-            if (!m_tracksNotification.isActive()) m_tracksNotification.start();
-            if (!m_settingsTimer.isActive()) m_settingsTimer.start();
-        }
-        m_analysisUrl.clear(); m_analysisActive = false; ++m_analysisDone; emit analysisChanged();
-        QTimer::singleShot(25, this, &TrackListModel::analyzeNext);
-    });
+    m_settings.remove(QStringLiteral("library/analysis")); // Retire the old audio-analysis cache.
     m_volume = qBound(0.0, m_settings.value(QStringLiteral("player/volume"), 0.65).toDouble(), 1.0);
     m_probeTimeout.setSingleShot(true);
     m_probeTimeout.setInterval(2500);
@@ -516,19 +502,9 @@ void TrackListModel::publishUpdates()
         track.insert(QStringLiteral("playlistOrder"), positions.value(url));
         track.insert(QStringLiteral("playlistIds"), membership.value(track.value(QStringLiteral("fileUrl")).toString()));
         track.insert(QStringLiteral("playCount"), m_playCounts.value(track.value(QStringLiteral("fileUrl")).toString(), 0).toLongLong());
-        auto analysis = m_analysisCache.value(url).toMap();
-        if (analysis.value("modified") != track.value("modified") || analysis.value("size") != track.value("size")) analysis.clear();
-        const double tagBpm = track.value("tagBpm").toDouble();
-        track["bpm"] = tagBpm > 0 ? QVariant(tagBpm) : analysis.value("bpm", 0);
-        const int taggedKey = track.value("tagKeyId", -1).toInt();
-        const int key = taggedKey >= 0 ? taggedKey : analysis.value("keyId", -1).toInt();
-        track["keyId"] = key; track["musicalKey"] = MusicAnalysis::keyName(key); track["camelot"] = MusicAnalysis::camelot(key);
-        for (const auto &field : {"beatOffset", "bpmConfidence", "keyConfidence", "analysisNote", "manual"}) track[field] = analysis.value(field);
-        if (track.contains("tagBeatOffset")) { track["beatOffset"] = track.value("tagBeatOffset"); track["bpmConfidence"] = tagBpm > 0 ? 1.0 : track.value("bpmConfidence").toDouble(); }
-        else if (tagBpm > 0 && std::abs(tagBpm - analysis.value("bpm").toDouble()) > 1) track["bpmConfidence"] = 0.0;
-        if (taggedKey >= 0) track["keyConfidence"] = 1.0;
-        if (tagBpm > 0 || taggedKey >= 0) track["analysisNote"] = tr("BPM/key read from the audio file's tags");
-        track["analyzed"] = analysis.value("version").toInt() == MusicAnalysis::Version;
+        for (const auto &field : {"bpm", "keyId", "musicalKey", "camelot", "beatOffset", "bpmConfidence",
+                 "keyConfidence", "analysisNote", "analyzed", "manual", "tagBpm", "tagKeyId", "tagBeatOffset"})
+            track.remove(field);
         entry = track;
     }
     m_songEntries.synchronize(m_tracks, QStringLiteral("fileUrl"));
@@ -794,7 +770,6 @@ void TrackListModel::saveSettings()
     m_settings.setValue(QStringLiteral("library/files"), m_files);
     m_settings.setValue(QStringLiteral("library/favorites"), m_favorites);
     m_settings.setValue(QStringLiteral("library/metadata"), m_metadataCache);
-    m_settings.setValue(QStringLiteral("library/analysis"), m_analysisCache);
     m_settings.setValue(QStringLiteral("library/playlists"), m_playlistData);
     m_settings.setValue(QStringLiteral("library/playCounts"), m_playCounts);
     m_settings.setValue(QStringLiteral("library/addedAt"), m_addedAt);

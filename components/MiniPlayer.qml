@@ -11,6 +11,7 @@ Window {
     property bool allowClose: false
     property bool positioned: false
     signal restoreRequested()
+    signal quitRequested()
     signal toggleRequested()
     signal nextRequested()
     signal previousRequested()
@@ -48,7 +49,7 @@ Window {
         requestActivate();
     }
     onClosing: function(event) {
-        if (!allowClose) { event.accepted = false; restoreRequested(); }
+        if (!allowClose) { event.accepted = false; quitRequested(); }
     }
     ColumnLayout {
         anchors.fill: parent

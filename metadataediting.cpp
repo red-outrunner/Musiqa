@@ -43,29 +43,6 @@ void TrackListModel::initializeMetadataEditing()
             AlbumGrouping::updateIdentity(track);
             m_tracks[row] = track;
             m_metadataCache[m_metadataUrl] = track;
-            // The audio samples haven't changed; retain analysis without redecoding.
-            if (m_analysisCache.contains(m_metadataUrl) || m_metadataChanges.contains("bpm") || m_metadataChanges.contains("initialKey") || m_metadataChanges.contains("beatOffset")) {
-                auto analysis = m_analysisCache.value(m_metadataUrl).toMap();
-                analysis["modified"] = result.value("modified"); analysis["size"] = result.value("size");
-                const auto fields = result.value("fields").toMap();
-                analysis["version"] = MusicAnalysis::Version;
-                if (m_metadataChanges.contains("bpm")) {
-                    analysis["bpm"] = fields.value("bpm").toString().toDouble();
-                    analysis["bpmConfidence"] = track.contains("tagBeatOffset") && analysis.value("bpm").toDouble() > 0 ? 1.0 : 0.0;
-                    analysis["manual"] = true;
-                }
-                if (m_metadataChanges.contains("initialKey")) {
-                    analysis["keyId"] = MusicAnalysis::parseKey(fields.value("initialKey").toString());
-                    analysis["keyConfidence"] = analysis.value("keyId").toInt() >= 0 ? 1.0 : 0.0;
-                    analysis["manual"] = true;
-                }
-                if (m_metadataChanges.contains("beatOffset")) {
-                    analysis["beatOffset"] = fields.value("beatOffset").toString().toDouble();
-                    analysis["bpmConfidence"] = track.contains("tagBeatOffset") ? 1.0 : 0.0;
-                    analysis["manual"] = true;
-                }
-                m_analysisCache[m_metadataUrl] = analysis;
-            }
             publishUpdates(); saveSettings();
         }
         emit metadataBusyChanged(); emit metadataSaved(m_metadataUrl);

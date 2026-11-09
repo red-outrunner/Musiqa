@@ -10,7 +10,6 @@ Item {
             crossfade: '<path d="M3 6h4c5 0 5 12 10 12h4M3 18h4c5 0 5-12 10-12h4"/>',
             mini: '<rect x="3" y="4" width="18" height="16" rx="2"/><rect x="11" y="11" width="8" height="6" rx="1"/>',
             expand: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8 3 3m13 5 5-5M8 16l-5 5m13-5 5 5"/>',
-            analyze: '<path d="M3 12h3l2-7 4 14 3-11 2 4h4"/>',
             moon: '<path d="M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z"/>',
             grip: '<path d="M8 5h1M15 5h1M8 12h1M15 12h1M8 19h1M15 19h1" stroke-width="3"/>',
             smart: '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/>',

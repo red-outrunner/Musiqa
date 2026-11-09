@@ -34,7 +34,6 @@ class LibraryViewModel : public QSortFilterProxyModel
     Q_PROPERTY(QString sortKey READ sortKey WRITE setSortKey NOTIFY filterChanged)
     Q_PROPERTY(bool favoritesOnly READ favoritesOnly WRITE setFavoritesOnly NOTIFY filterChanged)
     Q_PROPERTY(bool playedOnly READ playedOnly WRITE setPlayedOnly NOTIFY filterChanged)
-    Q_PROPERTY(QVariantMap musicMatch READ musicMatch WRITE setMusicMatch NOTIFY filterChanged)
 
 public:
     explicit LibraryViewModel(QObject *parent = nullptr);
@@ -45,14 +44,12 @@ public:
     QString sortKey() const { return m_sortKey; }
     bool favoritesOnly() const { return m_favoritesOnly; }
     bool playedOnly() const { return m_playedOnly; }
-    QVariantMap musicMatch() const { return m_musicMatch; }
     void setSearch(const QString &value);
     void setCollectionKind(const QString &value);
     void setCollectionId(const QString &value);
     void setSortKey(const QString &value);
     void setFavoritesOnly(bool value);
     void setPlayedOnly(bool value);
-    void setMusicMatch(const QVariantMap &value);
     Q_INVOKABLE QVariantMap get(int row) const;
     Q_INVOKABLE QVariantList entries(int limit = -1) const;
 
@@ -73,6 +70,5 @@ private:
     QString m_sortKey = QStringLiteral("name");
     bool m_favoritesOnly = false;
     bool m_playedOnly = false;
-    QVariantMap m_musicMatch;
     QCollator m_collator;
 };

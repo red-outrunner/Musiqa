@@ -26,7 +26,6 @@ public:
     QString error;
     QUrl url;
     QAudioFormat format;
-    QVariantMap analysis;
 signals:
     void ready();
 private:
@@ -75,10 +74,9 @@ public:
     const Voice &outgoing() const { return m_outgoing; }
     bool gapless = true;
     double crossfadeSeconds = 0;
-    bool quantize = false;
     bool stopAfterCurrent = false;
     bool ended() const { return m_ended; }
-    static QPair<qint64, qint64> transitionPlan(const PcmTrack &from, const PcmTrack &to, double seconds, bool quantize, qint64 position = 0);
+    static QPair<qint64, qint64> transitionPlan(const PcmTrack &from, const PcmTrack &to, double seconds);
 private:
     MixerEvent event(MixerEvent::Kind kind, const Voice &voice, qint64 offset) const;
     Voice newVoice(const std::shared_ptr<PcmTrack> &track, const QString &id, qint64 frame = 0);

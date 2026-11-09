@@ -123,18 +123,13 @@ class MusicaTests : public QObject
         return nullptr;
     }
 
-    static QVector<float> musicalSignal(int seconds, int rate, double bpm = 120)
+    static QVector<float> audioSignal(int seconds, int rate)
     {
         QVector<float> samples(seconds * rate);
-        constexpr double pi = 3.14159265358979323846;
         for (int i = 0; i < samples.size(); ++i) {
             const double time = double(i) / rate;
-            const double phase = std::fmod(time - 0.125 + 60 / bpm, 60 / bpm);
-            const double click = phase < 0.025 ? 0.5 * std::exp(-phase * 180) * std::sin(2 * pi * 1900 * phase) : 0;
-            // Root-weighted C major chord with harmonics and a stable pulse.
-            const double chord = 0.12 * std::sin(2 * pi * 261.625565 * time) + 0.06 * std::sin(2 * pi * 329.627557 * time)
-                + 0.06 * std::sin(2 * pi * 391.995436 * time) + 0.04 * std::sin(2 * pi * 523.25113 * time);
-            samples[i] = float(chord + click);
+            samples[i] = float(0.25 * std::sin(2 * 3.14159265358979323846 * 440 * time)
+                + 0.10 * std::sin(2 * 3.14159265358979323846 * 220 * time));
         }
         return samples;
     }
@@ -246,7 +241,7 @@ private slots:
         QFETCH(QString, extension); QFETCH(QString, codec);
         const auto directory = m_temp.filePath("portable-tags/" + extension); QDir().mkpath(directory);
         const auto source = directory + "/source.wav", audio = directory + "/Song." + extension;
-        QVERIFY(writeSignal(source, musicalSignal(1, 44100), 44100));
+        QVERIFY(writeSignal(source, audioSignal(1, 44100), 44100));
         bool ok = false;
         const auto encoded = runMediaTool("ffmpeg", {"-nostdin", "-v", "error", "-y", "-i", source, "-map", "0:a:0", "-c:a", codec, "-metadata", "title=Before", "-metadata", "artist=Original artist", "-metadata", "copyright=Keep this unrelated tag", audio}, &ok);
         QVERIFY2(ok, encoded.constData());
@@ -255,7 +250,7 @@ private slots:
         auto before = FileTags::read(audio, directory + "/cache", true); QVERIFY2(!before.contains("error"), qPrintable(before.value("error").toString()));
         const QVariantMap changes{{"title", QString::fromUtf8("Été · 海")}, {"artist", "New artist"}, {"album", "Portable album"},
             {"albumArtist", "The Collective"}, {"genre", "Jazz"}, {"date", "2026"}, {"composer", "A composer"}, {"comment", "Edited entirely offline"},
-            {"trackNumber", "2"}, {"trackTotal", "12"}, {"discNumber", "1"}, {"discTotal", "2"}, {"bpm", "126"}, {"initialKey", "Am"}};
+            {"trackNumber", "2"}, {"trackTotal", "12"}, {"discNumber", "1"}, {"discTotal", "2"}};
         const auto saved = FileTags::write(audio, changes, "replace", QUrl::fromLocalFile(cover), before.value("revision").toString(), directory + "/cache");
         QVERIFY2(!saved.contains("error"), qPrintable(saved.value("error").toString()));
         const auto hashAfter = runMediaTool("ffmpeg", {"-nostdin", "-v", "error", "-i", audio, "-map", "0:a:0", "-f", "hash", "-hash", "sha256", "-"}, &ok); QVERIFY2(ok, hashAfter.constData()); QCOMPARE(hashAfter, hashBefore);
@@ -283,8 +278,8 @@ private slots:
         const auto config = directory + "/other-machine.ini"; QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{}); settings.sync();
         TrackListModel library(config, false); library.addFiles({QUrl::fromLocalFile(moved)}); QTRY_VERIFY(!library.scanning());
         const auto track = library.trackForUrl(QUrl::fromLocalFile(moved).toString());
-        QCOMPARE(track.value("title").toString(), changes.value("title").toString()); QCOMPARE(track.value("bpm").toInt(), 126);
-        QCOMPARE(track.value("keyId").toInt(), 21); QCOMPARE(track.value("trackNumber").toInt(), 2); QCOMPARE(track.value("discNumber").toInt(), 1);
+        QCOMPARE(track.value("title").toString(), changes.value("title").toString());
+        QCOMPARE(track.value("trackNumber").toInt(), 2); QCOMPARE(track.value("discNumber").toInt(), 1);
         QVERIFY(!track.value("artwork").toString().isEmpty());
     }
 
@@ -297,7 +292,7 @@ private slots:
         const auto invalidCover = directory + "/broken.png"; QFile broken(invalidCover); QVERIFY(broken.open(QIODevice::WriteOnly)); broken.write("not an image"); broken.close();
         result = FileTags::write(audio, {{"title", "New"}}, "replace", QUrl::fromLocalFile(invalidCover), before.value("revision").toString(), {});
         QVERIFY(result.contains("error")); QCOMPARE(fileBytes(audio), beforeBytes);
-        result = FileTags::write(audio, {{"bpm", "999"}}, "keep", {}, before.value("revision").toString(), {}); QVERIFY(result.contains("error")); QCOMPARE(fileBytes(audio), beforeBytes);
+        result = FileTags::write(audio, {{"trackNumber", "10000"}}, "keep", {}, before.value("revision").toString(), {}); QVERIFY(result.contains("error")); QCOMPARE(fileBytes(audio), beforeBytes);
         const auto permissions = QFileInfo(audio).permissions(); QVERIFY(QFile::setPermissions(audio, QFile::ReadOwner));
         result = FileTags::write(audio, {{"title", "New"}}, "keep", {}, before.value("revision").toString(), {}); QVERIFY(result.contains("error"));
         QVERIFY(QFile::setPermissions(audio, permissions)); QCOMPARE(fileBytes(audio), beforeBytes);
@@ -382,7 +377,7 @@ private slots:
         QCOMPARE(tokens.size(), 2); QVERIFY(tokens[0] != tokens[1]);
     }
 
-    void crossfadeMixesAudioAndQuantizesTheTransition()
+    void crossfadeMixesAudioAndCapsTheTransition()
     {
         auto first = constantPcm(0.2f, 5000), second = constantPcm(0.4f, 5000); QVERIFY(first && second);
         AudioMixer mixer(1000, 2); mixer.crossfadeSeconds = 2; mixer.setCurrent(first, "one"); mixer.setNext(second, "two");
@@ -394,73 +389,23 @@ private slots:
         QVERIFY(std::abs(data[4000 * 2] - float(0.6 / std::sqrt(2.0))) < 0.002f);
         QVERIFY(std::abs(data[5000 * 2] - 0.4f) < 0.001f);
         first = constantPcm(0.2f, 10000); second = constantPcm(0.4f, 10000);
-        first->analysis = {{"bpm", 120}, {"beatOffset", 0.1}, {"bpmConfidence", 1}};
-        second->analysis = {{"bpm", 100}, {"beatOffset", 0.08}, {"bpmConfidence", 1}};
-        const auto plan = AudioMixer::transitionPlan(*first, *second, 3.2, true);
-        QCOMPARE(plan.first, 6600); QCOMPARE(plan.second, 80);
-        QCOMPARE(AudioMixer::transitionPlan(*first, *second, 3.2, false).first, 6800);
+        const auto plan = AudioMixer::transitionPlan(*first, *second, 3.2);
+        QCOMPARE(plan.first, 6800); QCOMPARE(plan.second, 0);
+        QCOMPARE(AudioMixer::transitionPlan(*first, *second, 0).first, 10000);
         auto longTrack = constantPcm(0.2f, 180000), longNext = constantPcm(0.4f, 200000);
-        QCOMPARE(AudioMixer::transitionPlan(*longTrack, *longNext, 100, false).first, 110000); // Hard limit: 70 seconds.
-        longTrack->analysis = {{"bpm", 120}, {"beatOffset", 0.4}, {"bpmConfidence", 1}};
-        const auto limited = AudioMixer::transitionPlan(*longTrack, *longNext, 70, true);
-        QVERIFY(limited.first >= 110000); QCOMPARE(limited.first % 500, 400); // Stay on the grid without exceeding 70 seconds.
+        QCOMPARE(AudioMixer::transitionPlan(*longTrack, *longNext, 100).first, 110000); // Hard limit: 70 seconds.
+        auto shortNext = constantPcm(0.4f, 1000);
+        QCOMPARE(AudioMixer::transitionPlan(*first, *shortNext, 70).first, 9001);
         mixer.clear(); mixer.setCurrent(first, "one"); mixer.setNext(second, "two"); mixer.stopAfterCurrent = true; mixer.crossfadeSeconds = 2;
         const auto sleeping = mixer.render(22000); QCOMPARE(sleeping.pcm.size(), 10000 * 8);
         for (const auto &event : sleeping.events) QVERIFY(event.kind != MixerEvent::Started || event.entryId == "one");
-    }
-
-    void audioAnalysisFindsTempoKeyAndCompatibleKeys()
-    {
-        const auto result = MusicAnalysis::analyze(musicalSignal(16, 11025), 11025);
-        QVERIFY2(std::abs(result.value("bpm").toDouble() - 120) < 1.5, qPrintable(QString::number(result.value("bpm").toDouble())));
-        QCOMPARE(result.value("keyId").toInt(), 0);
-        QVERIFY(std::abs(result.value("beatOffset").toDouble() - 0.125) < 0.035);
-        const auto silence = MusicAnalysis::analyze(QVector<float>(11025 * 4, 0), 11025);
-        QCOMPARE(silence.value("bpm").toInt(), 0); QCOMPARE(silence.value("keyId").toInt(), -1);
-        QCOMPARE(MusicAnalysis::parseKey("C major"), 0); QCOMPARE(MusicAnalysis::parseKey("8B"), 0);
-        QCOMPARE(MusicAnalysis::parseKey("Am"), 21); QCOMPARE(MusicAnalysis::parseKey("C# minor"), 13);
-        QVERIFY(MusicAnalysis::relatedKeys(0, 7)); // C major / G major: 8B / 9B.
-        QVERIFY(MusicAnalysis::relatedKeys(0, 21)); // Relative minor, 8B / 8A.
-        QVERIFY(!MusicAnalysis::relatedKeys(0, 1));
-        QVERIFY(!MusicAnalysis::relatedKeys(-1, 0));
-    }
-
-    void musicalDetailsPersistAndMatchingCombinesTempoAndKey()
-    {
-        const auto config = m_temp.filePath("musical-details.ini");
-        QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{}); settings.sync();
-        QStringList urls; QList<QUrl> files;
-        for (int i = 0; i < 4; ++i) { const auto path = m_temp.filePath(QStringLiteral("musical-details/%1 Song.wav").arg(i)); QVERIFY(writeWave(path, 4)); files.append(QUrl::fromLocalFile(path)); urls.append(files.last().toString()); }
-        {
-            TrackListModel library(config, false); library.addFiles(files); QTRY_VERIFY(!library.scanning());
-            QVERIFY(library.setMusicalDetails(urls[0], 120, 0, 0.125));
-            QVERIFY(library.setMusicalDetails(urls[1], 121, 7, 0));
-            QVERIFY(library.setMusicalDetails(urls[2], 120, 1, 0));
-            QVERIFY(library.setMusicalDetails(urls[3], 130, 21, 0));
-            QVariantMap match{{"fileUrl", urls[0]}, {"bpm", 120}, {"keyId", 0}, {"related", true}, {"mode", "both"}, {"tolerance", 1}};
-            library.songs()->setMusicMatch(match); QCOMPARE(library.songs()->count(), 1); QCOMPARE(library.songs()->get(0).value("fileUrl").toString(), urls[1]);
-            match["mode"] = "either"; library.songs()->setMusicMatch(match); QCOMPARE(library.songs()->count(), 3);
-            match["mode"] = "bpm"; match["tolerance"] = 0; library.songs()->setMusicMatch(match); QCOMPARE(library.songs()->count(), 1); QCOMPARE(library.songs()->get(0).value("fileUrl").toString(), urls[2]);
-            match["mode"] = "key"; match["related"] = false; library.songs()->setMusicMatch(match); QCOMPARE(library.songs()->count(), 0);
-            library.rescan(); QTRY_VERIFY(!library.scanning());
-            QCOMPARE(library.trackForUrl(urls[0]).value("bpm").toInt(), 120);
-        }
-        TrackListModel restored(config, true); QTRY_VERIFY(restored.libraryReady() && !restored.scanning());
-        QCOMPARE(restored.trackForUrl(urls[0]).value("camelot").toString(), QStringLiteral("8B"));
-        QCOMPARE(restored.trackForUrl(urls[0]).value("beatOffset").toDouble(), 0.125);
-        const auto signalPath = m_temp.filePath("musical-details/Analyzed.wav"); QVERIFY(writeSignal(signalPath, musicalSignal(12, 11025), 11025));
-        const auto signalUrl = QUrl::fromLocalFile(signalPath).toString(); restored.addFiles({QUrl(signalUrl)}); QTRY_VERIFY(!restored.scanning());
-        restored.analyzeTracks({signalUrl});
-        QTRY_VERIFY_WITH_TIMEOUT(!restored.analyzing() && restored.trackForUrl(signalUrl).value("analyzed").toBool(), 15000);
-        QVERIFY(std::abs(restored.trackForUrl(signalUrl).value("bpm").toDouble() - 120) < 1.5);
-        restored.analyzeTracks({signalUrl}); QVERIFY(!restored.analyzing()); // Cached analysis doesn't restart.
     }
 
     void playbackContinuesWhileTheInterfaceSavesSettings()
     {
         const auto config = m_temp.filePath("playback-continuity.ini");
         const auto song = QUrl::fromLocalFile(m_temp.filePath("continuity/Long.wav"));
-        QVERIFY(writeSignal(song.toLocalFile(), musicalSignal(14, 11025), 11025));
+        QVERIFY(writeSignal(song.toLocalFile(), audioSignal(14, 11025), 11025));
         // The real checkpoint rewrites an INI file containing the library cache.
         QVariantMap metadata;
         for (int i = 0; i < 5000; ++i)
@@ -559,7 +504,7 @@ private slots:
         connect(&engine, &PlaybackEngine::listeningProgress, &library, [&library](const QString &token, const QUrl &url, qint64 position, qint64 duration, bool playing, bool finished, qint64 timestamp) { library.observeAudiblePlayback(token, url.toString(), position, duration, playing, finished, timestamp); });
         connect(&engine, &PlaybackEngine::listeningSeeked, &library, &TrackListModel::seekAudiblePlayback);
         QSignalSpy advanced(&engine, &PlaybackEngine::trackAdvanced), requests(&engine, &PlaybackEngine::advanceRequested), slept(&engine, &PlaybackEngine::sleepTriggered), errors(&engine, &PlaybackEngine::errorOccurred);
-        engine.setGaplessEnabled(true); engine.setCrossfadeEnabled(true); engine.setCrossfadeSeconds(1); engine.setQuantizeFade(false);
+        engine.setGaplessEnabled(true); engine.setCrossfadeEnabled(true); engine.setCrossfadeSeconds(1);
         engine.playEntry("first", first, library.trackForUrl(first.toString()));
         engine.prepareNext("second", second, library.trackForUrl(second.toString()));
         QTRY_VERIFY_WITH_TIMEOUT(engine.crossfading(), 3000);
@@ -583,37 +528,32 @@ private slots:
         QCOMPARE(errors.size(), 0);
     }
 
-    void miniPlayerTransitionControlsAndMusicalMatchingWork()
+    void miniPlayerTransitionControlsWork()
     {
-        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
+        settings.setValue("library/analysis", QVariantMap{{"old-file", QVariantMap{{"bpm", 120}}}});
+        settings.setValue("playback/quantize", true); settings.sync();
         QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player");
         QTRY_VERIFY(library->libraryReady() && !library->scanning());
+        settings.sync(); QVERIFY(!settings.contains("library/analysis")); QVERIFY(!settings.contains("playback/quantize"));
+        QCOMPARE(library->metaObject()->indexOfProperty("analyzing"), -1);
+        QCOMPARE(library->songs()->metaObject()->indexOfProperty("musicMatch"), -1);
+        QCOMPARE(player->metaObject()->indexOfProperty("quantizeFade"), -1);
+        for (const auto &name : {"analyzeLibraryButton", "footerMusicalMatches", "musicalMatchMode", "quantizeFadeCheckBox"})
+            QVERIFY(!window->findChild<QObject *>(name));
+
         QList<QUrl> files;
         for (int i = 0; i < 3; ++i) { const auto path = m_temp.filePath(QStringLiteral("mixing-ui/%1 Song.wav").arg(i)); QVERIFY(writeWave(path, 30)); files.append(QUrl::fromLocalFile(path)); }
         library->addFiles(files); QTRY_VERIFY(!library->scanning());
-        QVERIFY(library->setMusicalDetails(files[0].toString(), 120, 0, 0.125));
-        QVERIFY(library->setMusicalDetails(files[1].toString(), 121, 7, 0));
-        QVERIFY(library->setMusicalDetails(files[2].toString(), 140, 1, 0));
         QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Songs"))); QTest::qWait(60); click(window, "playAllButton");
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-        click(window, "footerMusicalMatches");
-        QCOMPARE(window->property("activePage").toString(), QStringLiteral("Matching songs"));
-        QTRY_COMPARE(library->songs()->count(), 1);
-        QTest::qWait(60); click(window, "editMatchReferenceButton"); QTest::qWait(60);
-        auto *editor = window->findChild<QObject *>("metadataEditor"); QVERIFY(editor);
-        QTRY_VERIFY(editor->property("ready").toBool());
-        auto *bpmField = findItem(window->contentItem(), "metadata_bpm"); QVERIFY(bpmField);
-        bpmField->setProperty("text", "126"); click(window, "saveMetadataButton");
-        QTRY_VERIFY(!library->metadataBusy());
-        QTRY_COMPARE(library->trackForUrl(files[0].toString()).value("bpm").toInt(), 126); QTRY_COMPARE(library->songs()->count(), 0);
         QTest::qWait(60); click(window, "crossfadeSettingsButton"); QTest::qWait(60);
         QVERIFY(window->findChild<QObject *>("playbackOptions")->property("visible").toBool());
         click(window, "crossfadeCheckBox"); QVERIFY(player->crossfadeEnabled());
         player->setCrossfadeSeconds(70); QTRY_COMPARE(window->findChild<QObject *>("crossfadeSecondsBox")->property("value").toInt(), 70);
-        click(window, "quantizeFadeCheckBox"); QVERIFY(player->quantizeFade());
         player->setCrossfadeSeconds(0); QCOMPARE(player->crossfadeSeconds(), 0.0);
         window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-transition-controls.png");
         QMetaObject::invokeMethod(window->findChild<QObject *>("playbackOptions"), "close");
@@ -629,7 +569,7 @@ private slots:
         click(mini, "miniPlayPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
         click(mini, "miniFavoriteButton"); QCOMPARE(library->favoriteCount(), 1);
         mini->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-mini-player.png");
-        mini->close(); QTRY_VERIFY(window->isVisible() && !mini->isVisible());
+        click(mini, "restoreMainPlayerButton"); QTRY_VERIFY(window->isVisible() && !mini->isVisible());
         player->cancelSleep(); player->setCrossfadeEnabled(false);
         window->resize(900, 640); QTest::qWait(60); click(window, "crossfadeSettingsButton"); QTest::qWait(60);
         QVERIFY(findItem(window->contentItem(), "crossfadeSecondsBox")->mapToScene(QPointF()).y() >= 0);
@@ -691,8 +631,28 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QTest::qWait(60);
         click(window, "miniPlayerButton"); QTRY_VERIFY(mini->isVisible());
-        mini->close(); QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
+        click(mini, "restoreMainPlayerButton"); QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
         QCOMPARE(warnings.size(), 0);
+    }
+
+    void closeButtonQuitsTheWholeApplication_data()
+    {
+        QTest::addColumn<QString>("mode");
+        for (const auto &mode : {"main-idle", "main-playing", "main-while-mini", "mini-playing", "desktop-main", "desktop-mini"})
+            QTest::newRow(mode) << QString(mode);
+    }
+
+    void closeButtonQuitsTheWholeApplication()
+    {
+        QFETCH(QString, mode);
+        const auto song = m_temp.filePath("closing/Long.wav"); QVERIFY(writeWave(song, 30));
+        QProcess process;
+        process.start(QCoreApplication::applicationDirPath() + "/musica_close_probe", {mode, song});
+        QVERIFY(process.waitForStarted(2000));
+        QVERIFY2(process.waitForFinished(6500), "Closing Musica left its process running");
+        const auto output = process.readAllStandardOutput() + process.readAllStandardError();
+        QCOMPARE(process.exitStatus(), QProcess::NormalExit);
+        QVERIFY2(process.exitCode() == 0, output.constData());
     }
 
     void nestedImportDeduplicatesAndLoadsDuration()

@@ -58,7 +58,7 @@ PlaybackSnapshot PlaybackWorker::snapshot()
     result.source = m_source; result.entryId = m_entryId; result.position = m_position; result.duration = m_duration;
     result.state = m_state; result.status = m_status;
     result.gapless = m_gapless; result.crossfade = m_crossfade; result.crossfadeSeconds = m_crossfadeSeconds;
-    result.quantize = m_quantize; result.crossfading = crossfading();
+    result.crossfading = crossfading();
     result.sleepRemainingMs = sleepRemainingMs(); result.sleepAfterTrack = m_sleepAfterTrack;
     return result;
 }
@@ -73,13 +73,11 @@ void PlaybackWorker::configureMixer()
 {
     m_mixer.gapless = m_gapless;
     m_mixer.crossfadeSeconds = m_crossfade ? m_crossfadeSeconds : 0;
-    m_mixer.quantize = m_quantize;
     m_mixer.stopAfterCurrent = m_sleepAfterTrack;
 }
 void PlaybackWorker::setGaplessEnabled(bool value) { if (m_gapless == value) return; m_gapless = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setCrossfadeEnabled(bool value) { if (m_crossfade == value) return; m_crossfade = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setCrossfadeSeconds(double value) { if (!std::isfinite(value)) return; value = qBound(0.0, value, 70.0); if (qFuzzyCompare(value, m_crossfadeSeconds)) return; m_crossfadeSeconds = value; configureMixer(); emit optionsChanged(); }
-void PlaybackWorker::setQuantizeFade(bool value) { if (m_quantize == value) return; m_quantize = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setEntryId(const QString &id) { if (id == m_entryId) return; m_entryId = id; emit entryIdChanged(); }
 void PlaybackWorker::setState(QMediaPlayer::PlaybackState state) { if (state == m_state) return; m_state = state; emit playbackStateChanged(); }
 void PlaybackWorker::setStatus(QMediaPlayer::MediaStatus status) { if (status == m_status) return; m_status = status; emit mediaStatusChanged(); }
@@ -134,22 +132,22 @@ void PlaybackWorker::load(const QUrl &url, bool force)
     if (buffer) loaded(buffer);
 }
 
-void PlaybackWorker::playEntry(const QString &id, const QUrl &url, const QVariantMap &analysis)
+void PlaybackWorker::playEntry(const QString &id, const QUrl &url, const QVariantMap &info)
 {
     setEntryId(id); load(url, true);
-    if (auto buffer = m_buffers.value(url.toString()).lock()) { buffer->setInfo(analysis); loaded(buffer); }
+    if (auto buffer = m_buffers.value(url.toString()).lock()) { buffer->setInfo(info); loaded(buffer); }
     play();
 }
-void PlaybackWorker::prepareNext(const QString &id, const QUrl &url, const QVariantMap &analysis)
+void PlaybackWorker::prepareNext(const QString &id, const QUrl &url, const QVariantMap &info)
 {
     if (url.isEmpty() || id.isEmpty() || m_sleepAfterTrack) { m_mixer.setNext({}, {}); return; }
-    if (m_mixer.next().entryId == id && m_mixer.next().track && m_mixer.next().track->url == url) { m_mixer.next().track->setInfo(analysis); return; }
-    auto buffer = track(url); buffer->setInfo(analysis); m_mixer.setNext(buffer, id);
+    if (m_mixer.next().entryId == id && m_mixer.next().track && m_mixer.next().track->url == url) { m_mixer.next().track->setInfo(info); return; }
+    auto buffer = track(url); buffer->setInfo(info); m_mixer.setNext(buffer, id);
 }
 
-void PlaybackWorker::updateAnalysis(const QUrl &url, const QVariantMap &analysis)
+void PlaybackWorker::updateTrackInfo(const QUrl &url, const QVariantMap &info)
 {
-    if (auto buffer = m_buffers.value(url.toString()).lock()) { buffer->setInfo(analysis); loaded(buffer); }
+    if (auto buffer = m_buffers.value(url.toString()).lock()) { buffer->setInfo(info); loaded(buffer); }
 }
 
 void PlaybackWorker::play()

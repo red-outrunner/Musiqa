@@ -11,5 +11,4 @@ QVariantMap read(const QString &path, const QString &artworkDirectory, bool fing
 QVariantMap write(const QString &path, const QVariantMap &changes, const QString &coverAction,
     const QUrl &coverFile, const QString &expectedRevision, const QString &artworkDirectory);
 void applyToTrack(QVariantMap &track, const QVariantMap &tags, bool clearMissing = false);
-QString portableKey(int key);
 }

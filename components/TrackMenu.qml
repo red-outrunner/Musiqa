@@ -43,12 +43,6 @@ Menu {
         height: visible ? implicitHeight : 0
         onTriggered: root.actionRequested("removePlaylist")
     }
-    Menu {
-        title: "Tempo & key"
-        MenuItem { objectName: "menuFindMusicalMatches"; text: "Find songs with matching BPM / key"; onTriggered: root.actionRequested("match") }
-        MenuItem { objectName: "menuAnalyzeSong"; text: "Analyze BPM and key"; onTriggered: root.actionRequested("analyze") }
-        MenuItem { objectName: "menuEditMusicalDetails"; text: "Edit BPM, key, and beat offset…"; onTriggered: root.actionRequested("musicalDetails") }
-    }
     MenuSeparator {}
     MenuItem {
         objectName: "menuGoToArtist"

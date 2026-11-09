@@ -1,5 +1,4 @@
 #include "librarymodels.h"
-#include "audioanalysis.h"
 #include <cmath>
 
 #include <QSet>
@@ -40,7 +39,7 @@ QVariant LibraryEntryModel::data(const QModelIndex &index, int role) const
         QVariantMap fields;
         for (const auto &key : {QStringLiteral("title"), QStringLiteral("artist"), QStringLiteral("album"),
                                QStringLiteral("name"), QStringLiteral("subtitle"), QStringLiteral("favorite"),
-                               QStringLiteral("albumId"), QStringLiteral("artistId"), QStringLiteral("albumArtist"), QStringLiteral("playlistIds"), QStringLiteral("playCount"), QStringLiteral("addedAt"), QStringLiteral("fileUrl"), QStringLiteral("bpm"), QStringLiteral("keyId")})
+                               QStringLiteral("albumId"), QStringLiteral("artistId"), QStringLiteral("albumArtist"), QStringLiteral("playlistIds"), QStringLiteral("playCount"), QStringLiteral("addedAt"), QStringLiteral("fileUrl")})
             fields.insert(key, entry.value(key));
         return fields;
     }
@@ -85,7 +84,7 @@ void LibraryEntryModel::synchronize(const QVariantList &entries, const QString &
                 }
                 for (const auto &key : {QStringLiteral("title"), QStringLiteral("artist"), QStringLiteral("album"),
                                        QStringLiteral("name"), QStringLiteral("subtitle"), QStringLiteral("favorite"),
-                                       QStringLiteral("albumId"), QStringLiteral("artistId"), QStringLiteral("albumArtist"), QStringLiteral("playlistIds"), QStringLiteral("playCount"), QStringLiteral("addedAt"), QStringLiteral("fileUrl"), QStringLiteral("bpm"), QStringLiteral("keyId")}) {
+                                       QStringLiteral("albumId"), QStringLiteral("artistId"), QStringLiteral("albumArtist"), QStringLiteral("playlistIds"), QStringLiteral("playCount"), QStringLiteral("addedAt"), QStringLiteral("fileUrl")}) {
                     if (m_entries[row].value(key) != found.value().value(key)) {
                         roles.append(FilterRole);
                         break;
@@ -218,12 +217,6 @@ void LibraryViewModel::setPlayedOnly(bool value)
     emit filterChanged();
 }
 
-void LibraryViewModel::setMusicMatch(const QVariantMap &value)
-{
-    if (value == m_musicMatch) return;
-    beginRefilter(); m_musicMatch = value; endRefilter(); emit filterChanged();
-}
-
 void LibraryViewModel::beginRefilter()
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
@@ -245,16 +238,6 @@ bool LibraryViewModel::filterAcceptsRow(int row, const QModelIndex &parent) cons
     const auto entry = sourceModel()->data(sourceModel()->index(row, 0, parent), LibraryEntryModel::FilterRole).toMap();
     if (m_favoritesOnly && !entry.value(QStringLiteral("favorite")).toBool()) return false;
     if (m_playedOnly && entry.value(QStringLiteral("playCount")).toLongLong() <= 0) return false;
-    if (!m_musicMatch.isEmpty()) {
-        if (entry.value("fileUrl").toString() == m_musicMatch.value("fileUrl").toString()) return false;
-        const double bpm = entry.value("bpm").toDouble(), reference = m_musicMatch.value("bpm").toDouble();
-        const double tolerance = m_musicMatch.value("tolerance", 1.0).toDouble();
-        const bool tempo = bpm > 0 && reference > 0 && (tolerance <= 0 ? qRound(bpm) == qRound(reference) : std::abs(bpm - reference) <= tolerance);
-        const int key = entry.value("keyId", -1).toInt(), referenceKey = m_musicMatch.value("keyId", -1).toInt();
-        const bool harmonic = key >= 0 && referenceKey >= 0 && (m_musicMatch.value("related", true).toBool() ? MusicAnalysis::relatedKeys(key, referenceKey) : key == referenceKey);
-        const QString mode = m_musicMatch.value("mode", QStringLiteral("both")).toString();
-        if (!(mode == QStringLiteral("bpm") ? tempo : mode == QStringLiteral("key") ? harmonic : mode == QStringLiteral("either") ? tempo || harmonic : tempo && harmonic)) return false;
-    }
     if (!m_collectionId.isEmpty()) {
         if (m_collectionKind == QStringLiteral("smart")) {
             const qint64 plays = entry.value(QStringLiteral("playCount")).toLongLong();
