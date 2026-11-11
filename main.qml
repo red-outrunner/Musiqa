@@ -17,7 +17,7 @@ ApplicationWindow {
     title: (currentTrack ? currentTrack.title + " · Musica " : "Musica ") + Qt.application.version
     color: "#131918"
     font.family: "Noto Sans"
-    font.pixelSize: 13
+    font.pixelSize: 15
     palette.window: "#202e24"
     palette.base: "#16231b"
     palette.text: "#edf2ef"
@@ -1074,12 +1074,6 @@ ApplicationWindow {
                         font.pixelSize: 12
                         Layout.fillWidth: true
                     }
-                    Text {
-                        text: library.mostPlayed.count
-                        color: "#788a7f"
-                        font.pixelSize: 11
-                        Layout.rightMargin: 10
-                    }
                 }
             }
             Button {
@@ -1209,7 +1203,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-                text: "Local music, always yours"
+                text: "Musica"
                 color: "#6e8376"
                 font.pixelSize: 10
             }

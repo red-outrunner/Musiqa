@@ -1,6 +1,6 @@
 # Musica
 
-A native Qt 6 music player for the music you already own. A quiet dark interface, mint accents, album artwork, and a player that stays with you as you browse. Version **4.2.0** makes either window's close button exit the app and removes tempo/key analysis and matching. It includes dedicated-thread audio playback, an offline metadata editor, gapless playback, customizable crossfades, an independent mini player, sleep timers, and fast library scrolling.
+A native Qt 6 music player for the music you already own. A quiet dark interface, mint accents, album artwork, and a player that stays with you as you browse. Version **4.2.1** hides the Most Played sidebar count, makes either window's close button exit the app, and removes tempo/key analysis and matching. It includes dedicated-thread audio playback, an offline metadata editor, gapless playback, customizable crossfades, an independent mini player, sleep timers, and fast library scrolling.
 
 ## Use the player
 
