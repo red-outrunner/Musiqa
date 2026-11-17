@@ -1,4 +1,5 @@
 #include "filetags.h"
+#include "taglibpath.h"
 
 #include <audioproperties.h>
 #include <fileref.h>
@@ -94,8 +95,8 @@ QVariantMap readImpl(const QString &path, const QString &artworkDirectory, bool 
 {
     const QFileInfo info(path);
     if (!info.isFile() || !info.isReadable()) return failure(QStringLiteral("The audio file isn't readable."));
-    const QByteArray encoded = QFile::encodeName(path);
-    TagLib::FileRef file(encoded.constData(), true, TagLib::AudioProperties::Accurate);
+    const auto encoded = TagLibPath::encode(path);
+    TagLib::FileRef file(TagLibPath::data(encoded), true, TagLib::AudioProperties::Accurate);
     if (file.isNull() || !file.file() || !file.file()->isValid())
         return failure(QStringLiteral("This file doesn't have a tag format Musica can edit. Raw AAC files need an M4A container for portable metadata."));
     auto properties = file.properties();
@@ -207,9 +208,9 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
         if (chunk.isEmpty() || temporary.write(chunk) != chunk.size()) return failure(QStringLiteral("Couldn't copy the song. Check available disk space. Nothing was changed."));
     }
     original.close(); temporary.close();
-    const auto encoded = QFile::encodeName(temporary.fileName());
+    const auto encoded = TagLibPath::encode(temporary.fileName());
     {
-        TagLib::FileRef file(encoded.constData(), true, TagLib::AudioProperties::Accurate);
+        TagLib::FileRef file(TagLibPath::data(encoded), true, TagLib::AudioProperties::Accurate);
         if (file.isNull() || !file.file()->isValid()) return failure(QStringLiteral("The temporary song could not be opened for tagging."));
         auto properties = file.properties();
         // WAV INFO tags can exist independently of ID3; retain their basic
@@ -296,7 +297,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
         if (!file.save()) return failure(QStringLiteral("The metadata could not be saved to the temporary copy. Nothing was changed."));
     }
     if (QStringList{"aif", "aiff"}.contains(info.suffix().toLower())) {
-        LegacyAiffFile legacy(encoded.constData(), false);
+        LegacyAiffFile legacy(TagLibPath::data(encoded), false);
         if (!legacy.isValid()) return failure(QStringLiteral("The edited AIFF file couldn't be reopened. The original was kept."));
         legacy.synchronize(normalized);
     }

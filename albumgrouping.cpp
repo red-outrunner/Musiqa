@@ -66,6 +66,31 @@ int discFromDirectory(const QDir &directory)
 }
 }
 
+QVariantList AlbumGrouping::artistCredits(const QString &artist, bool split, const QString &separators)
+{
+    QStringList names;
+    QString current;
+    for (const auto character : artist) {
+        if (split && QStringLiteral(",;|").contains(character) && separators.contains(character)) {
+            names.append(current); current.clear();
+        } else current += character;
+    }
+    names.append(current);
+    QVariantList credits;
+    QSet<QString> seen;
+    for (const auto &name : names) {
+        const auto displayName = name.simplified();
+        const auto id = nameKey(displayName);
+        if (id.isEmpty() || seen.contains(id)) continue;
+        seen.insert(id);
+        credits.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("name"), displayName}});
+    }
+    // A tag containing only separators still needs a reachable library entry.
+    if (credits.isEmpty()) credits.append(QVariantMap{{QStringLiteral("id"), nameKey(artist)},
+        {QStringLiteral("name"), artist.simplified()}});
+    return credits;
+}
+
 void AlbumGrouping::updateIdentity(QVariantMap &track)
 {
     QString artist = track.value(QStringLiteral("artist")).toString().simplified();

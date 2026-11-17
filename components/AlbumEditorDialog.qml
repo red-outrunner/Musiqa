@@ -1,9 +1,11 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Dialog {
     id: root
+    font: Theme.controlFont
     required property var library
     property var albumChoices: []
     property var selectedIds: []
@@ -40,34 +42,34 @@ Dialog {
         if (!splitting && !albumName.text) albumName.text = album.name;
     }
     anchors.centerIn: parent
-    width: Math.min(760, parent.width - 40)
-    height: Math.min(720, parent.height - 40)
+    width: Math.min(Theme.dp(760), parent.width - Theme.gap(24))
+    height: Math.min(Theme.dp(720), parent.height - Theme.gap(24))
     modal: true
     title: "Manage album grouping"
-    padding: 20
-    palette.windowText: "#e5eee6"
-    palette.text: "#e5eee6"
-    palette.button: "#344b3a"
-    palette.buttonText: "#e5eee6"
-    palette.highlight: "#53765f"
-    palette.highlightedText: "#ffffff"
-    background: Rectangle { color: "#202e24"; radius: 12; border.color: "#405b47" }
+    padding: Theme.gap(20)
+    palette.windowText: Theme.text
+    palette.text: Theme.text
+    palette.button: Theme.raised
+    palette.buttonText: Theme.text
+    palette.highlight: Theme.accent
+    palette.highlightedText: Theme.onAccent
+    background: Rectangle { color: Theme.surface; radius: Theme.dp(12); border.color: Theme.border }
     onOpened: {
         albumChoices = library.albumOptions();
     }
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.gap(10)
         RowLayout {
             Layout.fillWidth: true
             ComboBox {
                 id: editMode
                 objectName: "albumEditMode"
                 model: ["Merge albums", "Split an album"]
-                Layout.preferredWidth: 180
+                Layout.preferredWidth: Theme.dp(180)
                 onActivated: { root.selectedIds = []; root.selectedUrls = []; root.preview = null; }
                 Accessible.name: "Album editing operation"
             }
-            Text { text: root.splitting ? "Choose one album below" : root.selectedIds.length + " albums selected"; color: "#8ba392"; font.pixelSize: 11; Layout.fillWidth: true }
+            Text { text: root.splitting ? "Choose one album below" : root.selectedIds.length + " albums selected"; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); Layout.fillWidth: true }
             ActionButton {
                 objectName: "undoAlbumEditButton"
                 text: "Undo last edit"
@@ -91,17 +93,17 @@ Dialog {
                 required property int index
                 objectName: "albumEditChoice" + index
                 width: albumList.width
-                height: 40
+                height: Theme.dp(40)
                 text: modelData.name + " · " + modelData.subtitle + " · " + modelData.trackCount + " songs"
                 checked: root.selectedIds.indexOf(modelData.id) >= 0
                 onClicked: root.toggleAlbum(modelData)
-                contentItem: Text { text: parent.text; color: "#d9e6dc"; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11; rightPadding: 40 }
-                background: Rectangle { color: parent.checked ? "#344e3b" : parent.hovered ? "#2b4032" : "#19281f"; radius: 4 }
+                contentItem: Text { text: parent.text; color: Theme.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); rightPadding: Theme.gap(40) }
+                background: Rectangle { color: parent.checked ? Theme.selected : parent.hovered ? Theme.hover : Theme.input; radius: Theme.dp(4) }
             }
         }
         RowLayout {
             visible: root.splitting && !root.showingPreview
-            Text { text: "Split by"; color: "#c4d5c8"; font.pixelSize: 11 }
+            Text { text: "Split by"; color: Theme.secondary; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)}
             ComboBox {
                 id: splitMode
                 objectName: "albumSplitMode"
@@ -115,7 +117,7 @@ Dialog {
             id: splitTracks
             visible: root.splitting && root.splitBy === "selected" && !root.showingPreview
             Layout.fillWidth: true
-            Layout.preferredHeight: 105
+            Layout.preferredHeight: Theme.dp(105)
             clip: true
             model: root.trackChoices
             ScrollBar.vertical: ScrollBar {}
@@ -124,7 +126,7 @@ Dialog {
                 required property int index
                 objectName: "albumSplitTrack" + index
                 width: splitTracks.width
-                height: 34
+                height: Theme.dp(34)
                 text: modelData.title + " · " + modelData.artist
                 checked: root.selectedUrls.indexOf(modelData.fileUrl) >= 0
                 onClicked: {
@@ -132,8 +134,8 @@ Dialog {
                     root.selectedUrls = root.selectedUrls.indexOf(url) >= 0 ? root.selectedUrls.filter(item => item !== url) : root.selectedUrls.concat([url]);
                     root.preview = null;
                 }
-                contentItem: Text { text: parent.text; color: "#c4d5c8"; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11; rightPadding: 40 }
-                background: Rectangle { color: parent.checked ? "#344e3b" : "#19281f"; radius: 4 }
+                contentItem: Text { text: parent.text; color: Theme.secondary; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); rightPadding: Theme.gap(40) }
+                background: Rectangle { color: parent.checked ? Theme.selected : Theme.input; radius: Theme.dp(4) }
             }
         }
         RowLayout {
@@ -144,24 +146,24 @@ Dialog {
                 objectName: "albumEditName"
                 Layout.fillWidth: true
                 placeholderText: root.splitting ? "New album name" : "Merged album name"
-                color: "#e5eee6"
-                placeholderTextColor: "#7e9585"
+                color: Theme.text
+                placeholderTextColor: Theme.muted
                 maximumLength: 80
                 selectByMouse: true
                 onTextChanged: root.preview = null
-                background: Rectangle { color: "#16231b"; radius: 6; border.color: "#405b47" }
+                background: Rectangle { color: Theme.input; radius: Theme.dp(6); border.color: Theme.border }
             }
             TextField {
                 id: albumArtist
                 objectName: "albumEditArtist"
                 Layout.fillWidth: true
                 placeholderText: "Album artist · Various artists"
-                color: "#e5eee6"
-                placeholderTextColor: "#7e9585"
+                color: Theme.text
+                placeholderTextColor: Theme.muted
                 maximumLength: 80
                 selectByMouse: true
                 onTextChanged: root.preview = null
-                background: Rectangle { color: "#16231b"; radius: 6; border.color: "#405b47" }
+                background: Rectangle { color: Theme.input; radius: Theme.dp(6); border.color: Theme.border }
             }
         }
         ActionButton {
@@ -179,9 +181,9 @@ Dialog {
             Layout.fillWidth: true
             visible: !!root.preview
             text: root.preview ? root.preview.error || (root.preview.groups.length + " albums · " + root.preview.trackCount + " songs after applying") : ""
-            color: root.preview && root.preview.error ? "#f2a79c" : "#a7e8cb"
+            color: root.preview && root.preview.error ? Theme.danger : Theme.accent
             wrapMode: Text.WordWrap
-            font.pixelSize: 11
+            font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)
         }
         ListView {
             id: previewList
@@ -194,16 +196,16 @@ Dialog {
             delegate: Text {
                 required property var modelData
                 width: previewList.width
-                height: 29
+                height: Theme.dp(29)
                 text: modelData.title
-                color: modelData.heading ? "#a7e8cb" : "#a1b5a7"
-                font.pixelSize: 11
+                color: modelData.heading ? Theme.accent : Theme.secondary
+                font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)
                 font.bold: modelData.heading
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
             }
         }
-        Text { text: "Changes affect your library grouping. Music files and tags stay untouched. The last 20 edits can be undone, including after restarting."; color: "#7e9585"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        Text { text: "Changes affect your library grouping. Music files and tags stay untouched. The last 20 edits can be undone, including after restarting."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {
             Layout.alignment: Qt.AlignRight
             ActionButton { text: "Cancel"; primary: false; onClicked: root.close() }

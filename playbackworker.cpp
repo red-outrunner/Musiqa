@@ -10,11 +10,12 @@
 PlaybackWorker::PlaybackWorker(QObject *parent) : QObject(parent), m_mixer(48000, 2), m_pump(this), m_sleep(this), m_sleepTick(this)
 {
     m_clock.start();
-    const auto device = QMediaDevices::defaultAudioOutput();
+    const auto device = QMediaDevices::defaultAudioOutput(); m_device = device;
     m_deviceFormat.setSampleRate(48000); m_deviceFormat.setChannelCount(2); m_deviceFormat.setSampleFormat(QAudioFormat::Float);
     if (!device.isNull() && !device.isFormatSupported(m_deviceFormat)) m_deviceFormat = device.preferredFormat();
     m_format = m_deviceFormat; m_format.setSampleFormat(QAudioFormat::Float);
     m_mixer = AudioMixer(m_format.sampleRate(), m_format.channelCount());
+    m_equalizer = AudioEqualizer(m_format.sampleRate(), m_format.channelCount());
     configureMixer();
     m_pump.setInterval(10); m_pump.setTimerType(Qt::PreciseTimer);
     connect(&m_pump, &QTimer::timeout, this, &PlaybackWorker::pump);
@@ -60,6 +61,11 @@ PlaybackSnapshot PlaybackWorker::snapshot()
     result.gapless = m_gapless; result.crossfade = m_crossfade; result.crossfadeSeconds = m_crossfadeSeconds;
     result.crossfading = crossfading();
     result.sleepRemainingMs = sleepRemainingMs(); result.sleepAfterTrack = m_sleepAfterTrack;
+    result.equalizerEnabled = m_equalizer.enabled(); result.equalizerPreset = m_equalizer.preset();
+    result.equalizerBandCount = m_equalizer.bandCount(); result.equalizerGains = m_equalizer.gains();
+    result.equalizerCustomGains = m_equalizer.customGains(); result.equalizerFrequencies = m_equalizer.frequencies();
+    result.outputMode = m_equalizer.mono() ? QStringLiteral("mono") : QStringLiteral("stereo");
+    result.replayGainMode = m_replayGainMode;
     return result;
 }
 
@@ -69,11 +75,111 @@ void PlaybackWorker::setVolume(float volume)
     if (m_sink) m_sink->setVolume(volume);
 }
 
+void PlaybackWorker::setEqualizerEnabled(bool enabled)
+{
+    if (m_equalizer.enabled() == enabled) return;
+    m_equalizer.setEnabled(enabled); emit optionsChanged();
+}
+
+void PlaybackWorker::setEqualizerPreset(const QString &preset)
+{
+    if (m_equalizer.preset() == preset) return;
+    if (m_equalizer.setPreset(preset)) emit optionsChanged();
+}
+
+void PlaybackWorker::setEqualizerBandCount(int count)
+{
+    if (m_equalizer.bandCount() != count && m_equalizer.setBandCount(count)) emit optionsChanged();
+}
+void PlaybackWorker::setEqualizerBandGain(int index, double gain)
+{
+    if (m_equalizer.setBandGain(index, gain)) emit optionsChanged();
+}
+void PlaybackWorker::setEqualizerCustomGains(const QVector<double> &gains)
+{
+    if (m_equalizer.setCustomGains(gains)) emit optionsChanged();
+}
+void PlaybackWorker::resetEqualizer() { m_equalizer.resetCurve(); emit optionsChanged(); }
+void PlaybackWorker::setOutputMode(const QString &mode)
+{
+    if (mode != QLatin1String("mono") && mode != QLatin1String("stereo")) return;
+    if (m_equalizer.mono() == (mode == QLatin1String("mono"))) return;
+    m_equalizer.setMono(mode == QLatin1String("mono")); emit optionsChanged();
+}
+
+void PlaybackWorker::setOutputDevice(const QAudioDevice &device)
+{
+    if (m_device.id() == device.id() && m_device.isNull() == device.isNull()) {
+        m_device = device; return;
+    }
+    rebuildOutputForDevice(device);
+}
+
+void PlaybackWorker::rebuildOutputForDevice(const QAudioDevice &device)
+{
+    deliverEvents();
+    const bool playing = m_state == QMediaPlayer::PlayingState;
+    m_pump.stop(); sendListening(false);
+    const auto current = m_mixer.current();
+    const auto next = current.track && (current.entryId != m_entryId || current.track->url != m_source)
+        ? current : m_mixer.next();
+    // A pending hardware event can own the last reference to the displayed
+    // track after the mixer has generated the next song. Keep it alive before
+    // resetting the sink clears those events.
+    auto active = m_buffers.value(m_source.toString()).lock();
+    const int oldRate = m_format.sampleRate();
+    QAudioFormat target = m_deviceFormat;
+    if (!device.isNull() && !device.isFormatSupported(target)) target = device.preferredFormat();
+    m_device = device;
+    resetOutput();
+    if (target.sampleRate() != m_format.sampleRate() || target.channelCount() != m_format.channelCount()) {
+        const auto preset = m_equalizer.preset(); const auto custom = m_equalizer.customGains();
+        const int count = m_equalizer.bandCount();
+        const bool enabled = m_equalizer.enabled(), mono = m_equalizer.mono();
+        for (const auto &weak : m_buffers) if (auto data = weak.lock()) disconnect(data.get(), nullptr, this, nullptr);
+        m_buffers.clear(); m_liveVoices.clear();
+        m_deviceFormat = target; m_format = target; m_format.setSampleFormat(QAudioFormat::Float);
+        m_mixer = AudioMixer(m_format.sampleRate(), m_format.channelCount()); configureMixer();
+        m_equalizer = AudioEqualizer(m_format.sampleRate(), m_format.channelCount());
+        m_equalizer.setBandCount(count); m_equalizer.setCustomGains(custom); m_equalizer.setPreset(preset);
+        m_equalizer.setEnabled(enabled); m_equalizer.setMono(mono); m_equalizer.reset();
+        if (!m_source.isEmpty()) {
+            auto replacement = track(m_source); replacement->setInfo({{"duration", m_duration}});
+            m_mixer.setCurrent(replacement, m_entryId, m_position * m_format.sampleRate() / 1000, m_displayToken);
+        }
+        if (next.track) {
+            auto upcoming = track(next.track->url);
+            upcoming->setInfo({{"duration", next.track->durationFrames() * 1000 / oldRate}});
+            m_mixer.setNext(upcoming, next.entryId);
+        }
+    } else {
+        m_deviceFormat = target;
+        if (!active && !m_source.isEmpty()) active = track(m_source);
+        if (active) m_mixer.setCurrent(active, m_entryId, m_position * m_format.sampleRate() / 1000, m_displayToken);
+        m_mixer.setNext(next.track, next.entryId);
+    }
+    emit transitionChanged();
+    if (playing) {
+        if (device.isNull()) {
+            setState(QMediaPlayer::PausedState);
+            emit errorOccurred(QMediaPlayer::ResourceError, tr("No audio output device is available. Reconnect it and press Play."));
+        } else { sendListening(true); m_pump.start(); pump(); }
+    }
+}
+
 void PlaybackWorker::configureMixer()
 {
+    m_mixer.replayGainMode = m_replayGainMode;
     m_mixer.gapless = m_gapless;
     m_mixer.crossfadeSeconds = m_crossfade ? m_crossfadeSeconds : 0;
     m_mixer.stopAfterCurrent = m_sleepAfterTrack;
+}
+void PlaybackWorker::setReplayGainMode(const QString &mode)
+{
+    if ((mode != "off" && mode != "track" && mode != "album") || mode == m_replayGainMode) return;
+    m_replayGainMode = mode; configureMixer();
+    if (mode != "off") for (const auto &weak : m_buffers) if (auto buffer = weak.lock()) buffer->loadReplayGain();
+    emit optionsChanged();
 }
 void PlaybackWorker::setGaplessEnabled(bool value) { if (m_gapless == value) return; m_gapless = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setCrossfadeEnabled(bool value) { if (m_crossfade == value) return; m_crossfade = value; configureMixer(); emit optionsChanged(); }
@@ -86,6 +192,7 @@ std::shared_ptr<PcmTrack> PlaybackWorker::track(const QUrl &url)
 {
     if (auto existing = m_buffers.value(url.toString()).lock()) return existing;
     auto buffer = std::make_shared<PcmTrack>(url, m_format);
+    if (m_replayGainMode != "off") buffer->loadReplayGain();
     m_buffers.insert(url.toString(), buffer);
     const std::weak_ptr<PcmTrack> weak = buffer;
     connect(buffer.get(), &PcmTrack::ready, this, [this, weak] {
@@ -115,6 +222,7 @@ void PlaybackWorker::resetOutput()
 {
     if (m_sink) { m_sink->reset(); m_sink.reset(); }
     m_output = nullptr; m_pending.clear(); m_events.clear(); m_generatedFrames = 0; m_submittedBytes = 0;
+    m_equalizer.reset();
 }
 
 void PlaybackWorker::setSource(const QUrl &url) { load(url, false); }
@@ -253,7 +361,7 @@ void PlaybackWorker::pump()
     if (m_state != QMediaPlayer::PlayingState) return;
     if (!m_sink) {
         if (m_mixer.current().track && m_mixer.current().track->frames() <= m_mixer.current().frame) return;
-        const auto device = QMediaDevices::defaultAudioOutput();
+        const auto device = m_device;
         if (device.isNull()) { setState(QMediaPlayer::StoppedState); emit errorOccurred(QMediaPlayer::ResourceError, tr("No audio output device is available.")); return; }
         m_sink = std::make_unique<QAudioSink>(device, m_deviceFormat);
         auto *sink = m_sink.get();
@@ -278,6 +386,7 @@ void PlaybackWorker::pump()
         if (m_pending.isEmpty()) {
             const int frames = int(qMin<qint64>(m_format.sampleRate() / 50, m_sink->bytesFree() / m_deviceFormat.bytesPerFrame()));
             auto block = m_mixer.render(frames);
+            m_equalizer.process(reinterpret_cast<float *>(block.pcm.data()), int(block.pcm.size() / m_format.bytesPerFrame()));
             for (const auto &event : block.events) m_events.enqueue({m_generatedFrames + event.offset, event});
             const int count = int(block.pcm.size() / sizeof(float));
             m_generatedFrames += count / m_format.channelCount();

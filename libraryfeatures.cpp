@@ -1,5 +1,6 @@
 #include "tracklibrary.h"
 #include "albumgrouping.h"
+#include "collectionfeatures.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -20,8 +21,7 @@ QString newAlbumId() { return QStringLiteral("manual:") + QUuid::createUuid().to
 QVariantList TrackListModel::albumOptions() const
 {
     QVariantList rows;
-    for (int i = 0; i < m_albumEntries.rowCount(); ++i)
-        rows.append(m_albumEntries.data(m_albumEntries.index(i, 0), LibraryEntryModel::EntryRole));
+    rows = m_database->valid() ? m_database->all("album") : m_albums.entries();
     QCollator collator;
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     collator.setNumericMode(true);
@@ -33,6 +33,9 @@ QVariantList TrackListModel::smartPlaylists() const
 {
     int recent = 0, never = 0, rare = 0;
     const qint64 since = QDateTime::currentMSecsSinceEpoch() - 30LL * 86400000;
+    if (!m_workingSetLoaded) {
+        const auto counts = m_database->smartCounts(); recent = counts.value("recent").toInt(); never = counts.value("never").toInt(); rare = counts.value("rare").toInt();
+    }
     for (const auto &entry : m_tracks) {
         const auto track = entry.toMap();
         const auto count = track.value("playCount").toLongLong();
@@ -47,6 +50,7 @@ QVariantList TrackListModel::smartPlaylists() const
 
 bool TrackListModel::renamePlaylist(const QString &id, const QString &name)
 {
+    const auto before = m_playlistData;
     const QString title = name.simplified();
     if (title.isEmpty() || title.size() > 80) {
         emit importError(tr("Give your playlist a name of 1–80 characters."));
@@ -64,6 +68,7 @@ bool TrackListModel::renamePlaylist(const QString &id, const QString &name)
         if (item.value("id").toString() != id) continue;
         item["name"] = title;
         entry = item;
+        recordPlaylistEdit(before, tr("Rename playlist"));
         saveSettings();
         publishUpdates();
         return true;
@@ -73,6 +78,7 @@ bool TrackListModel::renamePlaylist(const QString &id, const QString &name)
 
 bool TrackListModel::movePlaylistTrack(const QString &id, const QString &fileUrl, const QString &beforeUrl)
 {
+    const auto before = m_playlistData;
     for (auto &entry : m_playlistData) {
         auto item = entry.toMap();
         if (item.value("id").toString() != id) continue;
@@ -83,6 +89,7 @@ bool TrackListModel::movePlaylistTrack(const QString &id, const QString &fileUrl
         urls.insert(beforeUrl.isEmpty() ? urls.size() : urls.indexOf(beforeUrl), fileUrl);
         item["urls"] = urls;
         entry = item;
+        recordPlaylistEdit(before, tr("Reorder playlist"));
         saveSettings();
         publishUpdates();
         return true;
@@ -136,16 +143,92 @@ QString TrackListModel::importPlaylist(const QUrl &fileUrl)
         return false;
     };
     while (exists(name)) name = base.left(70) + QStringLiteral(" (%1)").arg(suffix++);
+    const auto before = m_playlistData;
+    ++m_suppressPlaylistUndo;
     const QString id = createPlaylist(name);
+    --m_suppressPlaylistUndo;
     if (id.isEmpty()) return {};
     auto playlist = m_playlistData.last().toMap();
     playlist["urls"] = urls;
     m_playlistData.last() = playlist;
+    recordPlaylistEdit(before, tr("Import playlist"));
     saveSettings();
     publishUpdates();
     if (!imports.isEmpty()) addFiles(imports);
     if (skipped) emit importError(tr("Playlist imported; %1 missing, unsupported, or remote entries skipped.").arg(skipped));
     return id;
+}
+
+void TrackListModel::recordPlaylistEdit(const QVariantList &before, const QString &label)
+{
+    if (m_suppressPlaylistUndo || before == m_playlistData) return;
+    const auto token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_playlistEdits.append({token, before, m_playlistData});
+    if (m_playlistEdits.size() > 20) m_playlistEdits.removeFirst();
+    emit playlistEditRecorded(label, token);
+}
+
+bool TrackListModel::restoreQueueEdit(const QString &id, const QVariantMap &input)
+{
+    auto session = input;
+    QStringList requested;
+    for (const auto &key : {"queue", "source"}) for (const auto &entry : session.value(key).toList()) requested.append(entry.toMap().value("fileUrl").toString());
+    QStringList ids;
+    if (m_database->valid()) ids = m_database->matchingSongUrls(requested);
+    else for (const auto &url : requested) if (!trackForUrl(url).isEmpty()) ids.append(url);
+    const QSet<QString> valid(ids.cbegin(), ids.cend());
+    for (const auto &key : {"queue", "source"}) {
+        QVariantList kept;
+        for (const auto &entry : session.value(key).toList()) if (valid.contains(entry.toMap().value("fileUrl").toString())) kept.append(entry);
+        session[key] = kept;
+    }
+    return m_queueStore->updateSession(id, session);
+}
+
+QStringList TrackListModel::queueSearchUrls(const QString &search, const QStringList &urls) const
+{
+    if (search.trimmed().isEmpty()) return urls;
+    QStringList matching;
+    if (m_database->valid()) matching = m_database->matchingSongUrls(urls, search);
+    else {
+        const auto query = CollectionRules::folded(search.trimmed());
+        const QSet<QString> unique(urls.cbegin(), urls.cend());
+        for (const auto &url : unique) {
+            const auto track = trackForUrl(url); QString text;
+            for (const auto &field : {"title", "artist", "album", "albumArtist", "genre"}) text += track.value(field).toString() + ' ';
+            if (CollectionRules::folded(text).contains(query)) matching.append(url);
+        }
+    }
+    const QSet<QString> found(matching.cbegin(), matching.cend());
+    QStringList result; for (const auto &url : urls) if (found.contains(url)) result.append(url);
+    return result;
+}
+
+QStringList TrackListModel::recentlyPlayedUrls(int days) const
+{
+    const auto since = QDate::currentDate().addDays(1 - qBound(1, days, 90)).toString(Qt::ISODate);
+    QSet<QString> urls;
+    for (auto day = m_dailyListening.cbegin(); day != m_dailyListening.cend(); ++day) {
+        if (day.key() < since) continue;
+        const auto totals = day.value().toMap();
+        for (auto track = totals.cbegin(); track != totals.cend(); ++track) {
+            const auto counts = track.value().toMap();
+            if (counts.value("ms").toLongLong() >= 10000 || counts.value("plays").toInt() > 0) urls.insert(track.key());
+        }
+    }
+    return urls.values();
+}
+
+bool TrackListModel::undoPlaylistEdit(const QString &token)
+{
+    for (int i = m_playlistEdits.size() - 1; i >= 0; --i) {
+        const auto edit = m_playlistEdits[i];
+        if (edit.token != token) continue;
+        if (m_playlistData != edit.after) { emit importError(tr("This playlist edit can no longer be undone because the playlists changed.")); return false; }
+        m_playlistData = edit.before; m_playlistEdits = m_playlistEdits.mid(0, i);
+        saveSettings(); publishUpdates(); return true;
+    }
+    return false;
 }
 
 bool TrackListModel::exportPlaylist(const QString &id, const QUrl &fileUrl)
@@ -192,7 +275,7 @@ bool TrackListModel::exportPlaylist(const QString &id, const QUrl &fileUrl)
 
 QVariantMap TrackListModel::playbackSession() const
 {
-    const auto saved = m_settings.value(QStringLiteral("player/session")).toMap();
+    const auto saved = m_queueStore->session();
     QVariantList queue;
     QHash<QString, QVariantMap> entries;
     for (const auto &entry : saved.value("queue").toList()) {
@@ -233,17 +316,38 @@ QVariantMap TrackListModel::playbackSession() const
 void TrackListModel::savePlaybackSession(const QVariantMap &session)
 {
     if (!m_libraryReady) return; // An empty model during startup must not erase the previous session.
-    m_settings.setValue(QStringLiteral("player/session"), session);
-    m_settings.setValue(QStringLiteral("history/days"), m_dailyListening);
-    m_settings.setValue(QStringLiteral("history/totals"), m_listeningTotals);
-    m_settings.setValue(QStringLiteral("history/recent"), m_recentListening);
-    m_settings.sync();
+    m_queueStore->saveSession(session);
+    saveListeningState();
 }
+
+void TrackListModel::saveListeningState()
+{
+    m_historySaveTimer.stop();
+    if (m_queueStore) m_queueStore->saveHistory({{"playCounts", m_playCounts}, {"days", m_dailyListening}, {"totals", m_listeningTotals}, {"recent", m_recentListening}});
+}
+
+QVariantList TrackListModel::savedQueues() const
+{
+    QVariantList result;
+    if (!m_queueStore) return result;
+    for (const auto &value : m_queueStore->queues()) {
+        const auto queue = value.toMap(), session = queue.value("session").toMap();
+        result.append(QVariantMap{{"id", queue.value("id")}, {"name", queue.value("name")},
+            {"trackCount", session.value("queue").toList().size()}, {"active", queue.value("id").toString() == m_queueStore->activeId()}});
+    }
+    return result;
+}
+QString TrackListModel::createQueue(const QString &name) { return m_queueStore->createQueue(name); }
+QString TrackListModel::startPlaybackQueue(const QString &name, const QVariantMap &session) { return m_queueStore->startPlaybackQueue(name, session); }
+bool TrackListModel::activateQueue(const QString &id) { return m_queueStore->activate(id); }
+bool TrackListModel::renameQueue(const QString &id, const QString &name) { return m_queueStore->renameQueue(id, name); }
+bool TrackListModel::deleteQueue(const QString &id) { return m_queueStore->removeQueue(id); }
+void TrackListModel::removeOtherQueues() { m_queueStore->removeOtherQueues(); }
 
 QString TrackListModel::albumSignature() const
 {
     QStringList members;
-    for (const auto &entry : m_tracks) {
+    for (const auto &entry : tracks()) {
         const auto track = entry.toMap();
         members.append(track.value("fileUrl").toString() + QChar(0x1f) + track.value("albumId").toString()
             + QChar(0x1f) + track.value("album").toString() + QChar(0x1f) + track.value("albumArtist").toString());
@@ -402,10 +506,9 @@ void TrackListModel::collectListening(const QString &url, qint64 audibleMs, bool
     const QString oldest = now.date().addDays(-90).toString(Qt::ISODate);
     for (auto it = m_dailyListening.begin(); it != m_dailyListening.end();)
         if (it.key() < oldest) it = m_dailyListening.erase(it); else ++it;
-    if (!m_settingsTimer.isActive()) m_settingsTimer.start();
-    // Position updates are frequent; the dashboard refreshes on whole seconds.
-    if (qualified || event.value("ms").toLongLong() / 1000 != (event.value("ms").toLongLong() - audibleMs) / 1000)
-        emit historyChanged();
+    if (!m_historySaveTimer.isActive()) m_historySaveTimer.start();
+    if (qualified) emit historyChanged();
+    else if (!m_dashboardTimer.isActive()) m_dashboardTimer.start();
 }
 
 QVariantMap TrackListModel::dashboard() const
@@ -435,11 +538,14 @@ QVariantMap TrackListModel::dashboard() const
         totalMs += it.value().toLongLong();
         const auto track = trackForUrl(it.key());
         if (track.isEmpty()) continue;
-        const auto id = track.value("artistId").toString();
-        auto row = artists.value(id, QVariantMap{{"id", id}, {"name", track.value("artist")}, {"ms", 0LL}, {"plays", 0LL}});
-        row["ms"] = row.value("ms").toLongLong() + it.value().toLongLong();
-        row["plays"] = row.value("plays").toLongLong() + m_playCounts.value(it.key()).toLongLong();
-        artists[id] = row;
+        for (const auto &creditEntry : track.value("artistCredits").toList()) {
+            const auto credit = creditEntry.toMap();
+            const auto id = credit.value("id").toString();
+            auto row = artists.value(id, QVariantMap{{"id", id}, {"name", credit.value("name")}, {"ms", 0LL}, {"plays", 0LL}});
+            row["ms"] = row.value("ms").toLongLong() + it.value().toLongLong();
+            row["plays"] = row.value("plays").toLongLong() + m_playCounts.value(it.key()).toLongLong();
+            artists[id] = row;
+        }
     }
     QVariantList topArtists, weeklyTracks, recent;
     for (const auto &artist : artists) topArtists.append(artist);

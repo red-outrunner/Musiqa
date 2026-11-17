@@ -1,40 +1,42 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Button {
     id: root
+    font: Theme.controlFont
     property string symbol: ""
     property bool primary: true
-    implicitHeight: 42
-    leftPadding: 18
-    rightPadding: 18
+    implicitHeight: Math.max(Theme.controlHeight(42), contentItem.implicitHeight + Theme.gap(16))
+    leftPadding: Theme.gap(18)
+    rightPadding: Theme.gap(18)
     hoverEnabled: true
     opacity: enabled ? 1 : 0.4
     background: Rectangle {
-        radius: 21
-        color: root.primary ? (root.down ? "#80c6a6" : root.hovered ? "#c1f4dd" : "#a7e8cb") : (root.hovered ? "#303c38" : "transparent")
+        radius: Theme.dp(21)
+        color: root.primary ? (root.down ? Qt.darker(Theme.accent, 1.12) : root.hovered ? Qt.lighter(Theme.accent, 1.08) : Theme.accent) : (root.hovered ? Theme.hover : "transparent")
         border.width: root.primary && !root.visualFocus ? 0 : 1
-        border.color: root.visualFocus ? "#d8ffed" : "#4b6158"
+        border.color: root.visualFocus ? Theme.accent : Theme.border
         Behavior on color {
             ColorAnimation {
-                duration: 120
+                duration: Theme.preferences.reducedMotion ? 0 : 120
             }
         }
     }
     contentItem: RowLayout {
-        spacing: 8
+        spacing: Theme.gap(8)
         Icon {
             visible: root.symbol.length > 0
             name: root.symbol
-            color: root.primary ? "#12251b" : "#e4eeea"
-            Layout.preferredWidth: 17
-            Layout.preferredHeight: 17
+            color: root.primary ? Theme.onAccent : Theme.text
+            Layout.preferredWidth: Theme.dp(17)
+            Layout.preferredHeight: Theme.dp(17)
         }
         Text {
             text: root.text
-            color: root.primary ? "#12251b" : "#e4eeea"
-            font.pixelSize: 12
+            color: root.primary ? Theme.onAccent : Theme.text
+            font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
             font.weight: Font.DemiBold
             horizontalAlignment: Text.AlignHCenter
             Layout.fillWidth: true

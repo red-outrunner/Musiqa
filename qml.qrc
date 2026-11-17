@@ -1,6 +1,26 @@
 <RCC>
     <qresource prefix="/">
         <file>main.qml</file>
+        <file>components/Theme.qml</file>
+        <file>components/TimeFormat.js</file>
+        <file>components/PinnedCollectionsPane.qml</file>
+        <file>components/FolderBrowserPane.qml</file>
+        <file>components/SmartPlaylistEditor.qml</file>
+        <file>components/TrackBookmarksDialog.qml</file>
+        <file>components/LibraryMaintenanceDialog.qml</file>
+        <file>components/EqualizerSettings.qml</file>
+        <file>components/AudioOutputSettings.qml</file>
+        <file>components/LyricsDialog.qml</file>
+        <file>components/ShareDialog.qml</file>
+        <file>components/QueueManagerDialog.qml</file>
+        <file>components/QueuePlaylistDialog.qml</file>
+        <file>components/PlayerBar.qml</file>
+        <file>components/ArtistLinks.qml</file>
+        <file>components/AboutDialog.qml</file>
+        <file>components/LazyPanel.qml</file>
+        <file>components/KeyboardSettings.qml</file>
+        <file>components/CacheSettings.qml</file>
+        <file>components/DisplaySettingsDialog.qml</file>
         <file>components/Icon.qml</file>
         <file>components/IconButton.qml</file>
         <file>components/ActionButton.qml</file>
@@ -8,16 +28,24 @@
         <file>components/LibraryScrollHandler.qml</file>
         <file>components/NowPlayingPane.qml</file>
         <file>components/TrackMenu.qml</file>
+        <file>components/GroupMenu.qml</file>
         <file>components/PlaylistDialog.qml</file>
         <file>components/SongInfoDialog.qml</file>
         <file>components/ReorderHandle.qml</file>
         <file>components/AlbumEditorDialog.qml</file>
         <file>components/ListeningDashboard.qml</file>
-        <file>components/MiniPlayer.qml</file>
         <file>components/PlaybackOptions.qml</file>
         <file>components/SleepTimerPopup.qml</file>
         <file>components/MetadataEditor.qml</file>
-        <file>assets/musica.svg</file>
+        <file>components/BatchMetadataEditor.qml</file>
+        <file>assets/musica.png</file>
+        <file>components/OverviewPane.qml</file>
+        <file>components/AdvancedSearchDialog.qml</file>
+        <file>components/SongColumnsDialog.qml</file>
+        <file>assets/cover-0.svg</file>
+        <file>assets/cover-1.svg</file>
+        <file>assets/cover-2.svg</file>
+        <file>assets/cover-3.svg</file>
         <file>assets/hero.svg</file>
     </qresource>
 </RCC>

@@ -1,10 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Musica
-Comment=Play and rediscover your local music
-Exec=musicplayer %F
+Comment=Play local audio files
+Exec=musicplayer %U
+TryExec=musicplayer
 Icon=musica
 Terminal=false
 Categories=Audio;Music;Player;AudioVideo;
-MimeType=audio/mpeg;audio/flac;audio/ogg;audio/opus;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-ms-wma;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/opus;audio/wav;audio/x-wav;audio/mp4;audio/x-m4a;audio/aac;audio/aiff;audio/x-aiff;audio/x-ms-wma;
 StartupNotify=true

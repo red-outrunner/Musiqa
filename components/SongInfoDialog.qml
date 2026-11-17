@@ -1,32 +1,37 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
+import "TimeFormat.js" as TimeFormat
 
 Dialog {
     id: root
+    font: Theme.controlFont
     property var details: ({})
+    signal artistChosen(var credit)
     title: "Song info"
-    width: 465
+    width: Math.min(Theme.dp(465), parent.width - Theme.gap(24))
+    height: Math.min(implicitHeight, parent.height - Theme.dp(24))
     modal: true
     anchors.centerIn: parent
-    padding: 22
+    padding: Theme.gap(22)
     standardButtons: Dialog.Close
-    palette.windowText: "#e5eee6"
-    palette.text: "#e5eee6"
-    palette.button: "#344b3a"
-    palette.buttonText: "#e5eee6"
+    palette.windowText: Theme.text
+    palette.text: Theme.text
+    palette.button: Theme.raised
+    palette.buttonText: Theme.text
     background: Rectangle {
-        color: "#202e24"
-        radius: 12
-        border.color: "#405b47"
+        color: Theme.surface
+        radius: Theme.dp(12)
+        border.color: Theme.border
     }
     contentItem: ScrollView {
         id: scroll
-        implicitHeight: 340
+        implicitHeight: Theme.dp(340)
         contentWidth: availableWidth
         clip: true
         Column {
             width: scroll.availableWidth
-            spacing: 15
+            spacing: Theme.gap(15)
             Repeater {
                 model: [
                     {
@@ -51,7 +56,7 @@ Dialog {
                     },
                     {
                         label: "DURATION",
-                        value: Math.floor((root.details.duration || 0) / 60000) + ":" + String(Math.floor((root.details.duration || 0) / 1000) % 60).padStart(2, "0")
+                        value: TimeFormat.duration(root.details.duration || 0)
                     },
                     {
                         label: "DISC / TRACK",
@@ -73,21 +78,34 @@ Dialog {
                 delegate: Column {
                     required property var modelData
                     width: scroll.availableWidth
-                    spacing: 5
+                    spacing: Theme.gap(5)
                     Text {
                         text: parent.modelData.label
-                        color: "#829d8b"
-                        font.pixelSize: 9
+                        color: Theme.muted
+                        font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(9)
                         font.letterSpacing: 1.2
                     }
                     TextEdit {
+                        visible: parent.modelData.label !== "ARTIST"
                         width: parent.width
                         text: parent.modelData.value || "Unknown"
-                        color: "#e1ebe1"
-                        font.pixelSize: 12
+                        color: Theme.text
+                        font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                         readOnly: true
                         selectByMouse: true
                         wrapMode: TextEdit.Wrap
+                    }
+                    ArtistLinks {
+                        visible: parent.modelData.label === "ARTIST"
+                        objectName: visible ? "songInfoArtistLink" : ""
+                        width: parent.width
+                        track: root.details
+                        placeholder: "Unknown"
+                        color: Theme.accent
+                        font.pointSize: Theme.textSize(12)
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                        onArtistChosen: function(credit) { root.artistChosen(credit); }
                     }
                 }
             }

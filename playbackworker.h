@@ -1,8 +1,10 @@
 #pragma once
 
 #include "audiomixer.h"
+#include "equalizer.h"
 #include "playbackstate.h"
 #include <QAudioSink>
+#include <QAudioDevice>
 #include <QElapsedTimer>
 #include <QMediaPlayer>
 #include <QQueue>
@@ -46,6 +48,15 @@ public:
     AudioOutputStatistics outputStatistics() const;
     PlaybackSnapshot snapshot();
     void setVolume(float volume);
+    void setEqualizerEnabled(bool enabled);
+    void setEqualizerPreset(const QString &preset);
+    void setEqualizerBandCount(int count);
+    void setEqualizerBandGain(int index, double gain);
+    void setEqualizerCustomGains(const QVector<double> &gains);
+    void resetEqualizer();
+    void setOutputMode(const QString &mode);
+    void setOutputDevice(const QAudioDevice &device);
+    void setReplayGainMode(const QString &mode);
 signals:
     void updated(const PlaybackSnapshot &snapshot);
     void sourceChanged();
@@ -65,6 +76,7 @@ signals:
     void listeningProgress(const QString &token, const QUrl &url, qint64 position, qint64 duration, bool playing, bool finished, qint64 timestamp);
     void listeningSeeked(const QString &token, qint64 position, qint64 timestamp);
 private:
+    friend class AudioFeatureTests;
     struct ScheduledEvent { qint64 frame; MixerEvent event; };
     std::shared_ptr<PcmTrack> track(const QUrl &url);
     void load(const QUrl &url, bool force);
@@ -72,12 +84,15 @@ private:
     void pump();
     void deliverEvents();
     void resetOutput();
+    void rebuildOutputForDevice(const QAudioDevice &device);
     void setState(QMediaPlayer::PlaybackState state);
     void setStatus(QMediaPlayer::MediaStatus status);
     void configureMixer();
     void sendListening(bool playing, bool finished = false);
     QAudioFormat m_format, m_deviceFormat;
+    QAudioDevice m_device;
     AudioMixer m_mixer;
+    AudioEqualizer m_equalizer;
     std::unique_ptr<QAudioSink> m_sink;
     QIODevice *m_output = nullptr;
     QHash<QString, std::weak_ptr<PcmTrack>> m_buffers;
@@ -100,6 +115,7 @@ private:
     bool m_sleepAfterTrack = false;
     bool m_gapless = true, m_crossfade = false;
     double m_crossfadeSeconds = 5;
+    QString m_replayGainMode = QStringLiteral("off");
     float m_volume = 1;
     quint64 m_revision = 0, m_generation = 0, m_sleepRevision = 0;
 };

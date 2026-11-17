@@ -1,12 +1,14 @@
 #pragma once
 
-#include <QDBusConnection>
-#include <QDBusVirtualObject>
 #include "playbackengine.h"
 #include <QPointer>
 #include <QVariantMap>
 
 class TrackListModel;
+
+#if MUSICA_HAS_DBUS
+#include <QDBusConnection>
+#include <QDBusVirtualObject>
 
 class MprisService : public QDBusVirtualObject
 {
@@ -37,3 +39,19 @@ private:
     QVariantMap m_lastProperties;
     bool m_registered = false;
 };
+#else
+// MPRIS is a Linux desktop protocol. Keep the application-facing interface
+// available on other platforms without making Qt DBus a build dependency.
+class MprisService : public QObject
+{
+    Q_OBJECT
+public:
+    MprisService(QObject *window, TrackListModel *, PlaybackEngine *) : QObject(window) {}
+    bool available() const { return false; }
+    QString serviceName() const { return {}; }
+    QVariantMap playerProperties() const { return {}; }
+public slots:
+    void refresh() {}
+    void notifySeeked(double) {}
+};
+#endif

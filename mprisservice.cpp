@@ -1,4 +1,6 @@
 #include "mprisservice.h"
+
+#if MUSICA_HAS_DBUS
 #include "tracklibrary.h"
 
 #include <QCoreApplication>
@@ -221,3 +223,4 @@ QString MprisService::introspect(const QString &) const
  <signal name="PropertiesChanged"><arg type="s"/><arg type="a{sv}"/><arg type="as"/></signal>
 </interface>)XML");
 }
+#endif

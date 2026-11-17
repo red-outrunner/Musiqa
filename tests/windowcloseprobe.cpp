@@ -8,6 +8,9 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include "tracklibrary.h"
+#include "artworkcache.h"
+#include "displaysettings.h"
+#include "sharing.h"
 #include "mprisservice.h"
 
 // Run real window-close/quit events in a separate process: a successful quit
@@ -15,8 +18,9 @@
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
+    const auto arguments = app.arguments();
     QTemporaryDir directory;
-    if (!directory.isValid() || argc != 3) return 2;
+    if (!directory.isValid() || arguments.size() != 3) return 2;
     QCoreApplication::setOrganizationName("MusicaTests");
     QCoreApplication::setApplicationName("MusicaCloseProbe");
     QStandardPaths::setTestModeEnabled(true);
@@ -25,22 +29,26 @@ int main(int argc, char **argv)
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, directory.path());
     QSettings settings; settings.setValue("library/folders", QStringList{});
-    settings.setValue("library/files", QStringList{QString::fromLocal8Bit(argv[2])}); settings.sync();
+    settings.setValue("library/files", QStringList{arguments[2]}); settings.sync();
     QQuickStyle::setStyle("Basic");
     qmlRegisterType<TrackListModel>("MusicPlayer", 1, 0, "TrackListModel");
     qmlRegisterType<PlaybackEngine>("MusicPlayer", 1, 0, "PlaybackEngine");
+    qmlRegisterType<DisplaySettings>("MusicPlayer", 1, 0, "DisplaySettings");
+    qmlRegisterType<Sharing>("MusicPlayer", 1, 0, "Sharing");
+    qmlRegisterSingletonType(QUrl("qrc:/components/Theme.qml"), "MusicPlayer", 1, 0, "Theme");
     qmlRegisterUncreatableType<LibraryViewModel>("MusicPlayer", 1, 0, "LibraryViewModel", "Provided by the music library");
+    registerPerformanceTypes();
     QQmlApplicationEngine qml;
     qml.load(QUrl("qrc:/main.qml"));
     if (qml.rootObjects().isEmpty()) return 3;
     auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
     auto *library = window->findChild<TrackListModel *>("library");
+    library->rescan(); // Discover this test's new fixture explicitly.
     auto *player = window->findChild<PlaybackEngine *>("player");
-    auto *mini = window->findChild<QQuickWindow *>("miniPlayer");
     MprisService desktop(window, library, player);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, window, [window] { QMetaObject::invokeMethod(window, "persistSession"); });
-    const QString mode = QString::fromLocal8Bit(argv[1]);
-    const QString url = QUrl::fromLocalFile(QString::fromLocal8Bit(argv[2])).toString();
+    const QString mode = arguments[1];
+    const QString url = QUrl::fromLocalFile(arguments[2]).toString();
     player->audioOutput()->setMuted(true);
     bool started = false;
     QTimer ready;
@@ -53,11 +61,11 @@ int main(int argc, char **argv)
         }
         if (mode != "main-idle" && player->position() < 100) return;
         ready.stop();
-        if (mode.contains("mini")) QMetaObject::invokeMethod(window, "openMiniPlayer");
+        if (mode.contains("fullscreen")) QMetaObject::invokeMethod(window, "toggleFullscreenNowPlaying");
+        if (mode.contains("minimized")) window->showMinimized();
         QTimer::singleShot(60, window, [&, mode] {
             if (mode.startsWith("desktop"))
                 QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "quit"), Q_ARG(QVariant, QVariant()));
-            else if (mode == "mini-playing") mini->close();
             else window->close();
         });
     });

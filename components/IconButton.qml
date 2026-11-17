@@ -1,16 +1,18 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 
 Button {
     id: root
+    font: Theme.controlFont
     property string symbol: "music"
     property string label: ""
-    property color glyphColor: checked ? "#a7e8cb" : "#b2bdbb"
+    property color glyphColor: checked ? Theme.accent : Theme.secondary
     property color surfaceColor: "transparent"
     property bool filled: false
-    implicitWidth: 36
-    implicitHeight: 36
-    padding: 8
+    implicitWidth: Theme.dp(36)
+    implicitHeight: Theme.dp(36)
+    padding: Theme.gap(8)
     hoverEnabled: true
     opacity: enabled ? 1 : 0.32
     Accessible.name: label
@@ -19,12 +21,12 @@ Button {
     ToolTip.delay: 600
     background: Rectangle {
         radius: width / 2
-        color: root.down ? "#394741" : root.hovered ? "#293632" : root.surfaceColor
+        color: root.down ? Theme.hover : root.hovered ? Theme.hover : root.surfaceColor
         border.width: root.visualFocus ? 2 : 0
-        border.color: "#a7e8cb"
+        border.color: Theme.accent
         Behavior on color {
             ColorAnimation {
-                duration: 120
+                duration: Theme.preferences.reducedMotion ? 0 : 120
             }
         }
     }

@@ -1,10 +1,12 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs as NativeDialogs
 
 Dialog {
     id: root
+    font: Theme.controlFont
     required property var library
     property string fileUrl: ""
     property var initial: ({})
@@ -38,13 +40,13 @@ Dialog {
         library.saveSongMetadata(fileUrl, changes, coverAction, coverFile, initial.revision || "");
     }
     anchors.centerIn: parent
-    width: Math.min(800, parent.width - 40)
-    height: Math.min(770, parent.height - 40)
+    width: Math.min(Theme.dp(800), parent.width - Theme.gap(24))
+    height: Math.min(Theme.dp(770), parent.height - Theme.gap(24))
     title: "Edit song metadata"
     modal: true
-    padding: 20
+    padding: Theme.gap(20)
     closePolicy: busy ? Popup.NoAutoClose : Popup.CloseOnEscape
-    background: Rectangle { color: "#202e24"; radius: 12; border.color: "#435b48" }
+    background: Rectangle { color: Theme.surface; radius: Theme.dp(12); border.color: Theme.border }
     Connections {
         target: root.library
         function onMetadataLoaded(details) {
@@ -65,43 +67,43 @@ Dialog {
         onAccepted: { root.coverFile = selectedFile; root.coverAction = "replace"; }
     }
     contentItem: ColumnLayout {
-        spacing: 12
-        Text { text: "Save tags and artwork inside the audio file. They travel with the song to other machines and players. All editing is offline."; color: "#a7c7b2"; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        spacing: Theme.gap(12)
+        Text { text: "Save tags and artwork inside the audio file. They travel with the song to other machines and players. All editing is offline."; color: Theme.secondary; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {
             visible: root.busy
-            BusyIndicator { running: root.busy; Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
-            Text { text: root.ready ? "Writing and verifying the audio file…" : "Reading the song's tags…"; color: "#a7e8cb"; font.pixelSize: 12; Layout.fillWidth: true }
+            BusyIndicator { running: root.busy; Layout.preferredWidth: Theme.dp(24); Layout.preferredHeight: Theme.dp(24) }
+            Text { text: root.ready ? "Writing and verifying the audio file…" : "Reading the song's tags…"; color: Theme.accent; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12); Layout.fillWidth: true }
         }
-        Text { visible: root.ready && !root.initial.writable; text: "This song or its folder is read-only."; color: "#f2a79c"; font.pixelSize: 12; Layout.fillWidth: true }
-        Text { objectName: "metadataEditorError"; visible: !!root.errorMessage; text: root.errorMessage; color: "#f2a79c"; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        Text { visible: root.ready && !root.initial.writable; text: "This song or its folder is read-only."; color: Theme.danger; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12); Layout.fillWidth: true }
+        Text { objectName: "metadataEditorError"; visible: !!root.errorMessage; text: root.errorMessage; color: Theme.danger; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 20
+            spacing: Theme.gap(20)
             enabled: root.ready && !root.busy
             ScrollView {
                 id: coverScroll
-                Layout.preferredWidth: root.width < 700 ? 170 : 215
+                Layout.preferredWidth: root.width < Theme.dp(700) ? 170 : 215
                 Layout.fillHeight: true
                 contentWidth: availableWidth
                 clip: true
             ColumnLayout {
                 width: coverScroll.availableWidth - 8
-                spacing: 12
+                spacing: Theme.gap(12)
                 CoverArt {
                     objectName: "metadataCoverPreview"
                     Layout.fillWidth: true
                     Layout.preferredHeight: width
-                    radius: 8
+                    radius: Theme.dp(8)
                     artwork: root.coverAction === "replace" ? root.coverFile.toString() : root.coverAction === "remove" ? "" : root.initial.artwork || ""
                     artStyle: 0
                 }
-                Text { text: root.coverAction === "replace" ? "New embedded front cover" : root.coverAction === "remove" ? "Embedded artwork will be removed" : root.initial.embeddedCover ? "Current embedded cover" : "No embedded cover"; color: "#8ba392"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Text { text: root.coverAction === "replace" ? "New embedded front cover" : root.coverAction === "remove" ? "Embedded artwork will be removed" : root.initial.embeddedCover ? "Current embedded cover" : "No embedded cover"; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 ActionButton { objectName: "chooseMetadataCoverButton"; text: "Choose image…"; symbol: "folder"; primary: false; Layout.fillWidth: true; onClicked: chooseCover.open() }
                 ActionButton { objectName: "removeMetadataCoverButton"; text: "Remove artwork"; symbol: "close"; primary: false; Layout.fillWidth: true; enabled: root.initial.embeddedCover || root.coverAction === "replace"; onClicked: { root.coverAction = "remove"; root.coverFile = ""; } }
                 Button { text: "Keep original artwork"; flat: true; enabled: root.coverAction !== "keep"; onClicked: { root.coverAction = "keep"; root.coverFile = ""; } }
-                Text { text: "JPEG or PNG · up to 20 MB\nArtwork is embedded at its original resolution."; color: "#7e9585"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Text { visible: !!root.initial.libraryTrack && !!root.initial.libraryTrack.manualAlbum; text: "Editing album tags will reset this song's library-only album grouping override."; color: "#a7c7b2"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Text { text: "JPEG or PNG · up to 20 MB\nArtwork is embedded at its original resolution."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Text { visible: !!root.initial.libraryTrack && !!root.initial.libraryTrack.manualAlbum; text: "Editing album tags will reset this song's library-only album grouping override."; color: Theme.secondary; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             }
             }
             ScrollView {
@@ -113,7 +115,7 @@ Dialog {
                 clip: true
                 ColumnLayout {
                     width: formScroll.availableWidth - 12
-                    spacing: 12
+                    spacing: Theme.gap(12)
                     Repeater {
                         model: [
                             {key: "title", label: "Title"}, {key: "artist", label: "Artist"}, {key: "album", label: "Album"},
@@ -125,8 +127,8 @@ Dialog {
                         delegate: ColumnLayout {
                             required property var modelData
                             Layout.fillWidth: true
-                            spacing: 4
-                            Text { text: parent.modelData.label; color: "#93ac9c"; font.pixelSize: 11 }
+                            spacing: Theme.gap(4)
+                            Text { text: parent.modelData.label; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)}
                             TextField {
                                 objectName: "metadata_" + modelData.key
                                 Layout.fillWidth: true
@@ -139,11 +141,11 @@ Dialog {
                             }
                         }
                     }
-                    Text { text: "Comment"; color: "#93ac9c"; font.pixelSize: 11 }
+                    Text { text: "Comment"; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)}
                     TextArea {
                         objectName: "metadata_comment"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 90
+                        Layout.preferredHeight: Theme.dp(90)
                         text: (root.initial.fields || {}).comment || ""
                         wrapMode: TextEdit.Wrap
                         selectByMouse: true
@@ -154,10 +156,10 @@ Dialog {
                 }
             }
         }
-        TextEdit { text: root.initial.path || root.fileUrl; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; color: "#6f8a78"; font.pixelSize: 10; Layout.fillWidth: true }
+        TextEdit { text: root.initial.path || root.fileUrl; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "Audio is preserved without re-encoding."; color: "#8ba392"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "Audio is preserved without re-encoding."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
             ActionButton { objectName: "cancelMetadataButton"; text: "Cancel"; primary: false; enabled: !root.busy; onClicked: root.close() }
             ActionButton { objectName: "saveMetadataButton"; text: "Save to file"; symbol: "check"; enabled: root.ready && !!root.initial.writable && root.changed && !root.busy; onClicked: root.saveChanges() }
         }

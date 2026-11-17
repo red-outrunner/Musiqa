@@ -2,6 +2,7 @@
 
 #include <QMediaPlayer>
 #include <QUrl>
+#include <QVector>
 
 // Measured at the output, independently of UI position notifications.
 struct AudioOutputStatistics {
@@ -23,5 +24,11 @@ struct PlaybackSnapshot {
     bool gapless = true, crossfade = false, crossfading = false;
     bool sleepAfterTrack = false;
     double crossfadeSeconds = 5;
+    bool equalizerEnabled = false;
+    QString equalizerPreset = QStringLiteral("bass");
+    int equalizerBandCount = 10;
+    QVector<double> equalizerGains, equalizerCustomGains, equalizerFrequencies;
+    QString outputMode = QStringLiteral("stereo");
+    QString replayGainMode = QStringLiteral("off");
 };
 Q_DECLARE_METATYPE(PlaybackSnapshot)

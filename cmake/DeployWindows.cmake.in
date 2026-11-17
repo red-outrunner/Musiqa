@@ -1,0 +1,16 @@
+set(_musica_deploy_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@")
+set(_musica_deploy_mode --release)
+if(CMAKE_INSTALL_CONFIG_NAME STREQUAL "Debug")
+    set(_musica_deploy_mode --debug)
+endif()
+execute_process(
+    COMMAND "@MUSICA_WINDEPLOYQT@" ${_musica_deploy_mode} --no-translations --no-compiler-runtime
+            --qmldir "@CMAKE_CURRENT_SOURCE_DIR@" --dir "${_musica_deploy_dir}"
+            "${_musica_deploy_dir}/musicplayer.exe"
+    RESULT_VARIABLE _musica_deploy_result)
+if(NOT _musica_deploy_result EQUAL 0)
+    message(FATAL_ERROR "windeployqt failed (${_musica_deploy_result}); the Windows package is incomplete.")
+endif()
+# MSVC binaries use the official Microsoft redistributable installed on the
+# target computer. Do not collect loose compiler-runtime DLLs from developer
+# tool directories. MinGW runtime dependencies are copied by CMake above.

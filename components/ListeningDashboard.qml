@@ -1,4 +1,5 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 
@@ -22,10 +23,12 @@ Flickable {
     ColumnLayout {
         id: dashboardColumn
         width: root.width - 8
-        spacing: 20
-        RowLayout {
+        spacing: Theme.gap(20)
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 14
+            columns: Math.max(1, Math.min(3, Math.floor(width / Math.max(Theme.dp(250), Theme.textPixels * 18))))
+            rowSpacing: Theme.gap(14)
+            columnSpacing: Theme.gap(14)
             Repeater {
                 model: [
                     {label: "LISTENING · LAST 7 DAYS", value: root.duration(root.statistics.weeklyMs || 0)},
@@ -35,40 +38,41 @@ Flickable {
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 105
-                    radius: 10
-                    color: "#202e27"
-                    border.color: "#304638"
+                    Layout.preferredHeight: Math.max(Theme.dp(105), metricContent.implicitHeight + Theme.gap(32))
+                    radius: Theme.dp(10)
+                    color: Theme.surface
+                    border.color: Theme.raised
                     Column {
+                        id: metricContent
                         anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 14
-                        Text { text: modelData.label; color: "#8ba392"; font.pixelSize: root.width < 700 ? 8 : 10; font.letterSpacing: 0.6 }
-                        Text { text: modelData.value; color: "#a7e8cb"; font.pixelSize: 28; font.weight: Font.DemiBold }
+                        anchors.margins: Theme.gap(16)
+                        spacing: Theme.gap(14)
+                        Text { width: parent.width; text: modelData.label; wrapMode: Text.WordWrap; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); font.letterSpacing: 0.6 }
+                        Text { text: modelData.value; color: Theme.accent; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(28); font.weight: Font.DemiBold }
                     }
                 }
             }
         }
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 178
-            radius: 10
-            color: "#1b2821"
+            Layout.preferredHeight: Theme.dp(178)
+            radius: Theme.dp(10)
+            color: Theme.hover
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 18
-                Text { text: "Your week in music"; color: "#edf2ef"; font.pixelSize: 16; font.weight: Font.DemiBold }
+                anchors.margins: Theme.gap(18)
+                Text { text: "Your week in music"; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(16); font.weight: Font.DemiBold }
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 18
+                    spacing: Theme.gap(18)
                     Repeater {
                         model: root.statistics.days || []
                         delegate: ColumnLayout {
                             required property var modelData
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            spacing: 6
+                            spacing: Theme.gap(6)
                             Item {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
@@ -77,14 +81,14 @@ Flickable {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     width: Math.min(parent.width, 48)
                                     height: Math.max(3, parent.height * modelData.ms / Math.max(60000, ...root.statistics.days.map(day => day.ms)))
-                                    radius: 3
-                                    color: modelData.ms > 0 ? "#79b69b" : "#34483b"
+                                    radius: Theme.dp(3)
+                                    color: modelData.ms > 0 ? Theme.accent : Theme.hover
                                     ToolTip.visible: barHover.hovered
                                     ToolTip.text: root.duration(modelData.ms)
                                     HoverHandler { id: barHover }
                                 }
                             }
-                            Text { Layout.alignment: Qt.AlignHCenter; text: modelData.label; color: "#8ba392"; font.pixelSize: 10 }
+                            Text { Layout.alignment: Qt.AlignHCenter; text: modelData.label; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)}
                         }
                     }
                 }
@@ -92,31 +96,31 @@ Flickable {
         }
         RowLayout {
             Layout.fillWidth: true
-            spacing: 14
+            spacing: Theme.gap(14)
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
-                spacing: 8
-                Text { text: "Weekly favorites"; color: "#edf2ef"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                Text { text: "Ranked by plays reaching 50%"; color: "#7e9585"; font.pixelSize: 10 }
-                Text { visible: !(root.statistics.weeklyTracks || []).length; text: "Your favorites will appear as you listen."; color: "#8ba392"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                spacing: Theme.gap(8)
+                Text { text: "Weekly favorites"; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(17); font.weight: Font.DemiBold }
+                Text { text: "Ranked by plays reaching 50%"; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)}
+                Text { visible: !(root.statistics.weeklyTracks || []).length; text: "Your favorites will appear as you listen."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Repeater {
                     model: root.statistics.weeklyTracks || []
                     delegate: ItemDelegate {
                         required property var modelData
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 57
+                        Layout.preferredHeight: Theme.rowHeight(57)
                         onClicked: root.playTrack(modelData)
-                        background: Rectangle { radius: 6; color: parent.hovered ? "#2b4032" : "#1d2b23" }
+                        background: Rectangle { radius: Theme.dp(6); color: parent.hovered ? Theme.hover : Theme.surface }
                         contentItem: RowLayout {
-                            CoverArt { artwork: modelData.artwork || ""; artStyle: modelData.artStyle || 0; Layout.preferredWidth: 36; Layout.preferredHeight: 36; radius: 5 }
+                            CoverArt { artwork: modelData.artwork || ""; artStyle: modelData.artStyle || 0; Layout.preferredWidth: Theme.dp(36); Layout.preferredHeight: Theme.dp(36); radius: Theme.dp(5) }
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 4
-                                Text { text: modelData.title; color: "#e5eee6"; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: modelData.artist; color: "#8ba392"; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                                spacing: Theme.gap(4)
+                                Text { text: modelData.title; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); elide: Text.ElideRight; Layout.fillWidth: true }
+                                Text { text: modelData.artist; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); elide: Text.ElideRight; Layout.fillWidth: true }
                             }
-                            Text { text: modelData.weeklyPlays + "×"; color: "#a7e8cb"; font.pixelSize: 12 }
+                            Text { text: modelData.weeklyPlays + "×"; color: Theme.accent; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)}
                         }
                     }
                 }
@@ -124,49 +128,49 @@ Flickable {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
-                spacing: 8
-                Text { text: "Top artists"; color: "#edf2ef"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                Text { text: "All time · ranked by listening time"; color: "#7e9585"; font.pixelSize: 10 }
-                Text { visible: !(root.statistics.topArtists || []).length; text: "Spend time with your favorite artists."; color: "#8ba392"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                spacing: Theme.gap(8)
+                Text { text: "Top artists"; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(17); font.weight: Font.DemiBold }
+                Text { text: "All time · ranked by listening time"; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)}
+                Text { visible: !(root.statistics.topArtists || []).length; text: "Spend time with your favorite artists."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Repeater {
                     model: root.statistics.topArtists || []
                     delegate: ItemDelegate {
                         required property var modelData
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 57
+                        Layout.preferredHeight: Theme.rowHeight(57)
                         onClicked: root.openArtist(modelData)
-                        background: Rectangle { radius: 6; color: parent.hovered ? "#2b4032" : "#1d2b23" }
+                        background: Rectangle { radius: Theme.dp(6); color: parent.hovered ? Theme.hover : Theme.surface }
                         contentItem: RowLayout {
-                            Icon { name: "artist"; color: "#a7e8cb"; Layout.preferredWidth: 23; Layout.preferredHeight: 23 }
-                            Text { text: modelData.name; color: "#e5eee6"; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
-                            Text { text: root.duration(modelData.ms); color: "#8ba392"; font.pixelSize: 10 }
+                            Icon { name: "artist"; color: Theme.accent; Layout.preferredWidth: Theme.dp(23); Layout.preferredHeight: Theme.dp(23) }
+                            Text { text: modelData.name; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: root.duration(modelData.ms); color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)}
                         }
                     }
                 }
             }
         }
-        Text { text: "Recent listening"; color: "#edf2ef"; font.pixelSize: 17; font.weight: Font.DemiBold }
-        Text { visible: !(root.statistics.recent || []).length; text: "Press play to start your listening history."; color: "#8ba392"; font.pixelSize: 12 }
+        Text { text: "Recent listening"; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(17); font.weight: Font.DemiBold }
+        Text { visible: !(root.statistics.recent || []).length; text: "Press play to start your listening history."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)}
         Repeater {
             model: root.statistics.recent || []
             delegate: ItemDelegate {
                 required property var modelData
                 Layout.fillWidth: true
-                Layout.preferredHeight: 55
+                Layout.preferredHeight: Theme.rowHeight(55)
                 onClicked: root.playTrack(modelData)
-                background: Rectangle { radius: 6; color: parent.hovered ? "#2b4032" : "#1b2821" }
+                background: Rectangle { radius: Theme.dp(6); color: parent.hovered ? Theme.hover : Theme.hover }
                 contentItem: RowLayout {
-                    CoverArt { artwork: modelData.artwork || ""; artStyle: modelData.artStyle || 0; Layout.preferredWidth: 36; Layout.preferredHeight: 36; radius: 5 }
+                    CoverArt { artwork: modelData.artwork || ""; artStyle: modelData.artStyle || 0; Layout.preferredWidth: Theme.dp(36); Layout.preferredHeight: Theme.dp(36); radius: Theme.dp(5) }
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 4
-                        Text { text: modelData.title; color: "#e5eee6"; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { text: modelData.artist + " · " + modelData.album; color: "#8ba392"; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                        spacing: Theme.gap(4)
+                        Text { text: modelData.title; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { text: modelData.artist + " · " + modelData.album; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); elide: Text.ElideRight; Layout.fillWidth: true }
                     }
-                    Text { text: Qt.formatDateTime(new Date(modelData.listenedAt), "ddd dd MMM · hh:mm"); color: "#8ba392"; font.pixelSize: 10 }
+                    Text { text: Qt.formatDateTime(new Date(modelData.listenedAt), "ddd dd MMM · hh:mm"); color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)}
                 }
             }
         }
-        Text { text: "History starts when you listen in this version. Pauses and seek jumps are excluded."; color: "#6e8878"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.bottomMargin: 12 }
+        Text { text: "History starts when you listen in this version. Pauses and seek jumps are excluded."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.bottomMargin: Theme.gap(12) }
     }
 }

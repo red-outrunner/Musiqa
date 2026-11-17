@@ -1,0 +1,6 @@
+{
+  "cmake.useCMakePresets": "never",
+  "cmake.configureSettings": {
+    "CMAKE_BUILD_TYPE": "Release"
+  }
+}

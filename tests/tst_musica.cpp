@@ -1,17 +1,22 @@
 #include <QAudioOutput>
+#include <QClipboard>
+#include <QMimeData>
 #include <QAbstractItemModelTester>
 #include <QBuffer>
 #include <QDataStream>
+#if MUSICA_HAS_DBUS
 #include <QDBusArgument>
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDBusVariant>
+#endif
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -23,18 +28,28 @@
 #include <QCryptographicHash>
 #include <QSignalSpy>
 #include <QScreen>
+#include <QFontInfo>
+#include <QScopeGuard>
+#include <QSqlQuery>
+#include <QSqlError>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QWheelEvent>
 #include <QtTest>
 
 #include "tracklibrary.h"
+#include "artworkcache.h"
+#include "displaysettings.h"
+#include "sharing.h"
 #include "albumgrouping.h"
 #include "mprisservice.h"
 #include "audiomixer.h"
 #include "filetags.h"
 #include <cmath>
+#include <algorithm>
+#include <limits>
 
+#if MUSICA_HAS_DBUS
 class DesktopSignalRecorder : public QObject
 {
     Q_OBJECT
@@ -50,6 +65,7 @@ public slots:
     }
     void seeked(qlonglong microseconds) { position = microseconds; }
 };
+#endif
 
 class CountingLibraryViewModel : public LibraryViewModel
 {
@@ -60,6 +76,17 @@ protected:
     {
         ++comparisons;
         return LibraryViewModel::lessThan(left, right);
+    }
+};
+
+class TrackMapReadCounter : public LibraryEntryModel
+{
+public:
+    mutable int mapReads = 0;
+    QVariant data(const QModelIndex &index, int role) const override
+    {
+        if (role == EntryRole) ++mapReads;
+        return LibraryEntryModel::data(index, role);
     }
 };
 
@@ -188,6 +215,21 @@ class MusicaTests : public QObject
                           item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
     }
 
+    static bool clickLink(QQuickWindow *window, const QString &name, const QString &target = QStringLiteral("artist:0"))
+    {
+        auto *item = findItem(window->contentItem(), name);
+        if (!item) return false;
+        const auto y = item->height() / 2;
+        for (int x = 0; x < int(item->width()); ++x) {
+            QString link;
+            if (!QMetaObject::invokeMethod(item, "linkAt", Q_RETURN_ARG(QString, link), Q_ARG(qreal, qreal(x)), Q_ARG(qreal, y))) return false;
+            if (link != target) continue;
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, item->mapToScene(QPointF(x + 1, y)).toPoint());
+            return true;
+        }
+        return false;
+    }
+
     static QVariantList qmlList(QObject *object, const char *property)
     {
         const auto value = object->property(property);
@@ -207,8 +249,326 @@ class MusicaTests : public QObject
     }
 
 private slots:
+    void genresRestoreFromTagsAndUpgradeWithoutScanning()
+    {
+        const auto config = m_temp.filePath("genres-library.ini");
+        const QStringList tags{" Jazz ", "jazz", "R&B/Soul", ""};
+        const QList<qint64> durations{120000, 180000, 7200000, 90000};
+        QVariantList snapshot;
+        for (int i = 0; i < tags.size(); ++i) {
+            auto track = releaseTrack("Album " + QString::number(i), "Artist", i + 1,
+                m_temp.filePath(QString("unavailable-genres/%1.wav").arg(i)));
+            track["genre"] = tags[i]; track["duration"] = durations[i]; track["addedAt"] = (i + 1) * 100LL;
+            track["artwork"] = QString(); track["artStyle"] = 0; track["probed"] = true; snapshot.append(track);
+        }
+        QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{});
+        settings.setValue("library/snapshot", snapshot); settings.sync();
+        {
+            TrackListModel library(config, false); QCOMPARE(library.genres()->count(), 3); QVERIFY(!library.scanning());
+            QCOMPARE(library.genreForTag("ＪＡＺＺ").value("id").toString(), QString("genre:jazz"));
+            QCOMPARE(library.tracksForGroup("genre", "genre:jazz").size(), 2);
+            QCOMPARE(library.tracksForGroup("genre", "genre:r&b/soul").size(), 1);
+            QCOMPARE(library.tracksForGroup("genre", library.genreForTag("").value("id").toString()).size(), 1);
+        }
+        // Simulate the preceding database version: songs and their cached tags
+        // are present, but genre collections, membership, and search are absent.
+        const auto connection = QString("pre-genres-database");
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection); db.setDatabaseName(config + ".library.sqlite"); QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("DELETE FROM entries WHERE kind='genre'"));
+            QVERIFY(query.exec("DELETE FROM membership WHERE kind='genre'"));
+            QVERIFY(query.exec("DELETE FROM state WHERE key IN ('genresVersion','hash/genre')"));
+            QVERIFY(query.exec("UPDATE entries SET search='' WHERE kind='song'"));
+        }
+        QSqlDatabase::removeDatabase(connection);
+        TrackListModel library(config, false); QVERIFY(library.pagedLibrary());
+        QCOMPARE(library.residentTrackCount(), 0); QCOMPARE(library.genres()->count(), 3);
+        QSignalSpy scanning(&library, &TrackListModel::scanningChanged);
+        auto *genres = library.genres(); genres->setSortKey("count"); genres->setSortDirection("descending");
+        QCOMPARE(genres->get(0).value("name").toString(), QString("Jazz")); QCOMPARE(genres->get(0).value("trackCount").toInt(), 2);
+        QCOMPARE(genres->get(0).value("duration").toLongLong(), 300000LL);
+        genres->setSortKey("duration"); QCOMPARE(genres->get(0).value("name").toString(), QString("R&B/Soul"));
+        genres->setSortDirection("ascending"); QCOMPARE(genres->get(0).value("name").toString(), QString("Unknown genre"));
+        genres->setSortKey("added"); genres->setSortDirection("descending"); QCOMPARE(genres->get(0).value("name").toString(), QString("Unknown genre"));
+        genres->setSearch("jazz"); QCOMPARE(genres->count(), 1); genres->setSearch("");
+        auto *songs = library.songs(); songs->setCollectionKind("genre"); songs->setCollectionId("genre:jazz"); QCOMPARE(songs->count(), 2);
+        songs->setSearch("Artist"); QCOMPARE(songs->count(), 2); songs->setSearch("R&B"); QCOMPARE(songs->count(), 0);
+        songs->setCollectionId(""); QCOMPARE(songs->count(), 1); songs->setSearch("Jazz"); QCOMPARE(songs->count(), 2);
+        QCOMPARE(library.tracksForGroup("genre", "genre:jazz").size(), 2);
+        QCOMPARE(library.residentTrackCount(), 0); QVERIFY(genres->cachedEntryCount() <= 192);
+        QTest::qWait(30); QCOMPARE(scanning.size(), 0); QVERIFY(!library.scanning());
+        LibraryEntryModel source; LibraryViewModel memory;
+        source.synchronize(snapshot, "fileUrl"); memory.setSourceModel(&source); memory.setCollectionKind("genre"); memory.setCollectionId("genre:jazz");
+        QCOMPARE(memory.count(), 2); memory.setSearch("jazz"); QCOMPARE(memory.count(), 2);
+        auto changed = snapshot[0].toMap(); changed["genre"] = "Rock"; snapshot[0] = changed; source.synchronize(snapshot, "fileUrl");
+        QCOMPARE(memory.count(), 1);
+    }
+
+    void genresPageSupportsSortingMenusAndPlayback_data()
+    {
+        QTest::addColumn<QSize>("windowSize"); QTest::addColumn<double>("textScale");
+        QTest::newRow("normal") << QSize(1280, 850) << 1.0;
+        QTest::newRow("large-text") << QSize(800, 600) << 1.6;
+    }
+
+    void genresPageSupportsSortingMenusAndPlayback()
+    {
+        QFETCH(QSize, windowSize); QFETCH(double, textScale);
+        const auto folder = m_temp.filePath("genres-ui");
+        const QStringList tags{"Jazz", "jazz", "Rock", ""}; const QList<int> durations{20, 40, 120, 10};
+        QVariantList snapshot; QStringList jazzUrls;
+        for (int i = 0; i < tags.size(); ++i) {
+            const auto path = folder + QString("/%1 Song.wav").arg(i + 1);
+            QVERIFY(writeWave(path, durations[i], "Artist", "Album", i + 1));
+            const auto native = FileTags::read(path, folder, true);
+            const auto tagged = FileTags::write(path, {{"genre", tags[i]}}, "keep", {}, native.value("revision").toString(), folder);
+            QVERIFY2(!tagged.contains("error"), qPrintable(tagged.value("error").toString()));
+            auto track = releaseTrack("Album", "Artist", i + 1, path);
+            track["genre"] = tags[i]; track["duration"] = durations[i] * 1000LL; track["addedAt"] = (i + 1) * 100LL;
+            track["artwork"] = QString(); track["artStyle"] = 0; track["probed"] = true; snapshot.append(track);
+            if (i < 2) jazzUrls.append(track.value("fileUrl").toString());
+        }
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.setValue("library/snapshot", snapshot); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); QVERIFY(window);
+        auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);
+        player->audioOutput()->setMuted(true);
+        auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display); display->setTextScale(textScale);
+        QTRY_VERIFY(window->property("sessionRestored").toBool()); QTest::qWait(20); window->resize(windowSize); QTest::qWait(30);
+        click(window, "navGenres"); QTest::qWait(40); QCOMPARE(window->property("activePage").toString(), QString("Genres"));
+        QCOMPARE(library->genres()->count(), 3); QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Jazz"));
+        click(window, "groupSortButton"); QTest::qWait(20); click(window, "groupSortOption_count"); QTest::qWait(20);
+        QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Jazz"));
+        click(window, "groupSortDirectionButton"); QTest::qWait(20); QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Rock"));
+        click(window, "groupSortButton"); QTest::qWait(20); click(window, "groupSortOption_duration"); QTest::qWait(20);
+        QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Rock"));
+        click(window, "groupSortDirectionButton"); QTest::qWait(20); QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Unknown genre"));
+        click(window, "groupSortButton"); QTest::qWait(20); click(window, "groupSortOption_added"); QTest::qWait(20);
+        QCOMPARE(library->genres()->get(0).value("name").toString(), QString("Unknown genre"));
+        click(window, "groupSortButton"); QTest::qWait(20); click(window, "groupSortOption_name"); QTest::qWait(20);
+        auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search); search->setProperty("text", "Jazz"); QTest::qWait(20);
+        QCOMPARE(library->genres()->count(), 1); search->setProperty("text", ""); QTest::qWait(20);
+        auto *card = findItem(window->contentItem(), "groupCard0"); QVERIFY(card);
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, card->mapToScene(QPointF(30, 30)).toPoint()); QTest::qWait(30);
+        auto *menu = window->findChild<QObject *>("groupMenu"); QVERIFY(menu && menu->property("visible").toBool());
+        QCOMPARE(menu->property("kind").toString(), QString("genre"));
+        // Menus can scroll on small screens; activating their action checks the
+        // same handler without assuming every item fits above the pointer.
+        auto *queueAction = window->findChild<QObject *>("groupAddToQueue"); QVERIFY(queueAction);
+        QVERIFY(QMetaObject::invokeMethod(queueAction, "triggered")); QMetaObject::invokeMethod(menu, "close"); QTest::qWait(20);
+        QCOMPARE(window->property("queueCount").toInt(), 2);
+        click(window, "groupCard0"); QTest::qWait(30); QCOMPARE(window->property("collectionKind").toString(), QString("genre"));
+        QCOMPARE(library->songs()->count(), 2); QCOMPARE(window->property("collectionName").toString(), QString("Jazz"));
+        click(window, "playAllButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        QCOMPARE(window->property("queueCount").toInt(), 2);
+        const auto queues = library->savedQueues();
+        const auto active = std::find_if(queues.cbegin(), queues.cend(), [&](const QVariant &entry) { return entry.toMap().value("id").toString() == library->activeQueueId(); });
+        QVERIFY(active != queues.cend()); QCOMPARE(active->toMap().value("name").toString(), QString("Jazz"));
+        QSignalSpy loaded(library, &TrackListModel::batchMetadataLoaded), saved(library, &TrackListModel::batchMetadataSaved);
+        click(window, "selectAllSongs"); click(window, "editSelectedMetadataButton"); QTRY_COMPARE(loaded.size(), 1);
+        auto *editor = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(editor); QTRY_VERIFY(editor->property("ready").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor, "applyField", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, true)));
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, QString("Soul"))));
+        click(window, "saveBatchMetadataButton"); QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
+        QCOMPARE(window->property("collectionName").toString(), QString("Soul")); QCOMPARE(library->songs()->count(), 2);
+        QCOMPARE(library->tracksForGroup("genre", "genre:jazz").size(), 0); QCOMPARE(library->tracksForGroup("genre", "genre:soul").size(), 2);
+        QCOMPARE(window->property("queueCount").toInt(), 2); QVERIFY(!library->scanning());
+        QMetaObject::invokeMethod(window, "goBack"); QTest::qWait(30); QCOMPARE(window->property("activePage").toString(), QString("Genres"));
+        QCOMPARE(window->property("collectionName").toString(), QString()); QCOMPARE(window->property("genreSortKey").toString(), QString("name"));
+        QVERIFY(findItem(window->contentItem(), "groupSortButton")->isVisible()); QCOMPARE(warnings.size(), 0);
+    }
+
+    void collectionSortingIsNumericAndDirectional_data()
+    {
+        QTest::addColumn<bool>("database");
+        QTest::newRow("in-memory") << false;
+        QTest::newRow("sqlite") << true;
+    }
+
+    void collectionSortingIsNumericAndDirectional()
+    {
+        QFETCH(bool, database);
+        QVariantList rows{
+            QVariantMap{{"id", "a"}, {"name", "Album 2"}, {"subtitle", "Zulu"}, {"addedAt", 100LL}, {"trackCount", 12}, {"duration", 2000000LL}},
+            QVariantMap{{"id", "b"}, {"name", "Album 10"}, {"subtitle", "Alpha"}, {"addedAt", 300LL}, {"trackCount", 2}, {"duration", 12000000LL}},
+            QVariantMap{{"id", "c"}, {"name", "Album 1"}, {"subtitle", "Middle"}, {"addedAt", 200LL}, {"trackCount", 2}, {"duration", 1000000LL}}
+        };
+        LibraryEntryModel source;
+        CountingLibraryViewModel view;
+        QAbstractItemModelTester modelTester(&view, QAbstractItemModelTester::FailureReportingMode::QtTest);
+        LibraryDatabase store(m_temp.filePath("collection-sorts.sqlite")); QVERIFY(store.valid());
+        if (database) { QVERIFY(store.replace({}, rows, {}, {})); view.setDatabase(&store, "album"); }
+        else { source.synchronize(rows, "id"); view.setSourceModel(&source); }
+        const auto check = [&](const QString &key, const QStringList &ascending, const QStringList &descending) {
+            view.setSortKey(key); view.setSortDirection("ascending"); QCOMPARE(view.fileUrls(), ascending);
+            view.setSortDirection("descending"); QCOMPARE(view.fileUrls(), descending);
+        };
+        check("title", {"c", "a", "b"}, {"b", "a", "c"});
+        check("artist", {"b", "c", "a"}, {"a", "c", "b"});
+        check("added", {"a", "c", "b"}, {"b", "c", "a"});
+        check("count", {"c", "b", "a"}, {"a", "c", "b"});
+        check("duration", {"c", "a", "b"}, {"b", "a", "c"});
+        view.setSearch("Album 1"); QCOMPARE(view.fileUrls(), QStringList({"b", "c"}));
+        view.setSortDirection("ascending"); QCOMPARE(view.fileUrls(), QStringList({"c", "b"}));
+        view.setSearch(""); view.setSortDirection("descending");
+        auto changed = rows[2].toMap(); changed["duration"] = 25000000LL; changed["trackCount"] = 20; rows[2] = changed;
+        if (database) QVERIFY(store.replace({}, rows, {}, {}));
+        else source.synchronize(rows, "id");
+        QCOMPARE(view.fileUrls(), QStringList({"c", "b", "a"}));
+        view.setSortKey("count"); QCOMPARE(view.fileUrls(), QStringList({"c", "a", "b"}));
+        changed = rows[0].toMap(); changed["subtitle"] = "Aardvark"; rows[0] = changed;
+        if (database) QVERIFY(store.replace({}, rows, {}, {}));
+        else source.synchronize(rows, "id");
+        view.setSortKey("artist"); view.setSortDirection("ascending"); QCOMPARE(view.fileUrls(), QStringList({"a", "b", "c"}));
+        if (database) QVERIFY(view.cachedEntryCount() <= 192);
+        else {
+            view.setSortKey("duration"); view.comparisons = 0;
+            for (auto &entry : rows) { auto item = entry.toMap(); item["artwork"] = "file:///changed.jpg"; entry = item; }
+            source.synchronize(rows, "id"); QCOMPARE(view.comparisons, 0);
+        }
+    }
+
+    void existingDatabaseGainsCollectionSortingWithoutScanning()
+    {
+        const auto config = m_temp.filePath("legacy-collection-sorts.ini");
+        const auto path = config + ".library.sqlite";
+        const QString connection = "legacy-collection-sorts";
+        const auto cleanup = qScopeGuard([&] { QSqlDatabase::removeDatabase(connection); });
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", connection); db.setDatabaseName(path); QVERIFY(db.open());
+            QSqlQuery query(db);
+            QVERIFY(query.exec("CREATE TABLE entries(kind TEXT NOT NULL,id TEXT NOT NULL,pos INTEGER,payload BLOB NOT NULL,nrank INTEGER,trank INTEGER,arrank INTEGER,alrank INTEGER,trackrank INTEGER,plays INTEGER,added INTEGER,favorite INTEGER,search TEXT,failed INTEGER,PRIMARY KEY(kind,id))"));
+            QVERIFY(query.exec("CREATE TABLE membership(kind TEXT NOT NULL,groupid TEXT NOT NULL,songid TEXT NOT NULL,ord INTEGER,PRIMARY KEY(kind,groupid,songid))"));
+            QVERIFY(query.exec("CREATE TABLE state(key TEXT PRIMARY KEY,value BLOB)"));
+            QVERIFY(query.exec("INSERT INTO state VALUES('snapshot','[true]')"));
+            const QVariantList songs{
+                QVariantMap{{"fileUrl", "file:///unavailable-one.wav"}, {"duration", 3600000LL}, {"addedAt", 100LL}},
+                QVariantMap{{"fileUrl", "file:///unavailable-two.wav"}, {"duration", 1800000LL}, {"addedAt", 300LL}},
+                QVariantMap{{"fileUrl", "file:///unavailable-three.wav"}, {"duration", 7200000LL}, {"addedAt", 200LL}}
+            };
+            const QVariantList albums{
+                QVariantMap{{"id", "album-a"}, {"name", "Zulu album"}, {"subtitle", "Alpha artist"}, {"trackCount", 2}},
+                QVariantMap{{"id", "album-b"}, {"name", "Alpha album"}, {"subtitle", "Zulu artist"}, {"trackCount", 1}}
+            };
+            const QVariantList artists{
+                QVariantMap{{"id", "artist-a"}, {"name", "Alpha artist"}, {"trackCount", 2}},
+                QVariantMap{{"id", "artist-b"}, {"name", "Zulu artist"}, {"trackCount", 2}}
+            };
+            for (const auto &dataset : {qMakePair(QString("song"), songs), qMakePair(QString("album"), albums), qMakePair(QString("artist"), artists)}) {
+                for (int row = 0; row < dataset.second.size(); ++row) {
+                    const auto entry = dataset.second[row].toMap();
+                    query.prepare("INSERT INTO entries(kind,id,pos,payload,added) VALUES(?,?,?,?,?)");
+                    query.addBindValue(dataset.first); query.addBindValue(entry.value(dataset.first == "song" ? "fileUrl" : "id"));
+                    query.addBindValue(row); query.addBindValue(QJsonDocument::fromVariant(entry).toJson(QJsonDocument::Compact)); query.addBindValue(entry.value("addedAt", 0));
+                    QVERIFY2(query.exec(), qPrintable(query.lastError().text()));
+                }
+            }
+            const QStringList members{
+                "('album','album-a','file:///unavailable-one.wav',0)", "('album','album-a','file:///unavailable-two.wav',0)",
+                "('album','album-b','file:///unavailable-three.wav',0)", "('artist','artist-a','file:///unavailable-one.wav',0)",
+                "('artist','artist-a','file:///unavailable-two.wav',0)", "('artist','artist-b','file:///unavailable-two.wav',0)",
+                "('artist','artist-b','file:///unavailable-three.wav',0)"
+            };
+            for (const auto &member : members) QVERIFY(query.exec("INSERT INTO membership VALUES" + member));
+        }
+        QSettings settings(config, QSettings::IniFormat);
+        settings.setValue("library/databaseReady", true); settings.setValue("library/folders", QStringList{}); settings.sync();
+        {
+            TrackListModel library(config, false); QVERIFY(library.pagedLibrary()); QVERIFY(!library.scanning());
+            QCOMPARE(library.residentTrackCount(), 0); QCOMPARE(library.trackCount(), 3);
+            auto *albums = library.albums(); albums->setSortKey("added");
+            QCOMPARE(albums->get(0).value("id").toString(), QString("album-a"));
+            QCOMPARE(albums->get(0).value("addedAt").toLongLong(), 300LL);
+            albums->setSortDirection("ascending"); QCOMPARE(albums->get(0).value("id").toString(), QString("album-b"));
+            albums->setSortKey("artist"); QCOMPARE(albums->get(0).value("id").toString(), QString("album-a"));
+            albums->setSortKey("title"); QCOMPARE(albums->get(0).value("id").toString(), QString("album-b"));
+            auto *artists = library.artists(); artists->setSortKey("duration"); artists->setSortDirection("descending");
+            QCOMPARE(artists->get(0).value("id").toString(), QString("artist-b"));
+            QCOMPARE(artists->get(0).value("duration").toLongLong(), 9000000LL);
+            QCOMPARE(artists->get(1).value("duration").toLongLong(), 5400000LL);
+            QCOMPARE(artists->get(0).value("trackCount").toInt(), 2);
+            QCOMPARE(library.residentTrackCount(), 0); QVERIFY(!library.scanning());
+        }
+        LibraryDatabase reopened(path); QVERIFY2(reopened.valid(), qPrintable(reopened.error()));
+        QCOMPARE(reopened.value("collectionSortingVersion").toInt(), 1);
+        QCOMPARE(reopened.entry("artist", "artist-b").value("duration").toLongLong(), 9000000LL);
+    }
+
+    void collectionSortControlsKeepTheirOrderAcrossNavigation_data()
+    {
+        QTest::addColumn<QSize>("windowSize"); QTest::addColumn<double>("textScale");
+        QTest::newRow("normal") << QSize(1280, 850) << 1.0;
+        QTest::newRow("small-large-text") << QSize(800, 600) << 1.6;
+    }
+
+    void collectionSortControlsKeepTheirOrderAcrossNavigation()
+    {
+        QFETCH(QSize, windowSize); QFETCH(double, textScale);
+        QVariantList snapshot;
+        const QStringList artists{"Zulu", "Alpha", "Middle"}, albums{"Album 2", "Album 10", "Album 1"};
+        const QList<int> counts{12, 2, 3}; const QList<qint64> durations{60000, 3600000, 120000}; const QList<qint64> dates{100, 300, 200};
+        for (int artist = 0; artist < artists.size(); ++artist) {
+            for (int song = 0; song < counts[artist]; ++song) {
+                auto track = releaseTrack(albums[artist], artists[artist], song + 1,
+                    m_temp.filePath(QString("collection-ui/%1/track-%2.wav").arg(artists[artist]).arg(song)), {}, artists[artist]);
+                track["duration"] = durations[artist]; track["addedAt"] = dates[artist]; track["probed"] = true;
+                track["artwork"] = QString(); track["artStyle"] = 0; snapshot.append(track);
+            }
+        }
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.setValue("library/snapshot", snapshot); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); QVERIFY(window);
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display); display->setTextScale(textScale);
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
+        // Startup fits the window to the offscreen display. Resize after that
+        // initial event so pointer checks use the requested logical dimensions.
+        QTest::qWait(20); window->resize(windowSize);
+        QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Albums"))); QTest::qWait(50);
+        QCOMPARE(window->size(), windowSize);
+        QCOMPARE(library->albums()->get(0).value("name").toString(), QString("Album 1"));
+        click(window, "groupSortButton"); QTest::qWait(30); click(window, "groupSortOption_added"); QTest::qWait(30);
+        QCOMPARE(library->albums()->get(0).value("name").toString(), QString("Album 10")); QVERIFY(window->property("albumSortDescending").toBool());
+        click(window, "groupSortDirectionButton"); QTest::qWait(20);
+        QCOMPARE(library->albums()->get(0).value("name").toString(), QString("Album 2"));
+        click(window, "groupSortButton"); QTest::qWait(30); click(window, "groupSortOption_artist"); QTest::qWait(30);
+        QCOMPARE(library->albums()->get(0).value("name").toString(), QString("Album 10"));
+        click(window, "groupCard0"); QTest::qWait(30);
+        QVERIFY(!window->property("collectionName").toString().isEmpty()); QVERIFY(!findItem(window->contentItem(), "groupSortingToolbar")->isVisible());
+        QCOMPARE(window->property("sortBy").toString(), QString("Track"));
+        QMetaObject::invokeMethod(window, "goBack"); QTest::qWait(40);
+        QCOMPARE(window->property("albumSortKey").toString(), QString("artist"));
+        QCOMPARE(library->albums()->get(0).value("name").toString(), QString("Album 10"));
+        QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Artists"))); QTest::qWait(40);
+        click(window, "groupSortButton"); QTest::qWait(30); click(window, "groupSortOption_count"); QTest::qWait(30);
+        QCOMPARE(library->artists()->get(0).value("name").toString(), QString("Zulu"));
+        click(window, "groupSortDirectionButton"); QTest::qWait(20);
+        QCOMPARE(library->artists()->get(0).value("name").toString(), QString("Alpha"));
+        click(window, "groupSortButton"); QTest::qWait(30); click(window, "groupSortOption_duration"); QTest::qWait(30);
+        QCOMPARE(library->artists()->get(0).value("name").toString(), QString("Alpha"));
+        auto *details = findItem(window->contentItem(), "groupDetails0"); QVERIFY(details);
+        QVERIFY(details->property("text").toString().contains("2 h"));
+        auto *title = findItem(window->contentItem(), "groupTitle0"); QVERIFY(title);
+        QVERIFY(details->y() >= title->y() + title->height());
+        click(window, "groupSortButton"); QTest::qWait(30); click(window, "groupSortAscending"); QTest::qWait(30);
+        QCOMPARE(library->artists()->get(0).value("name").toString(), QString("Middle"));
+        auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search); search->setProperty("text", "Zulu"); QTest::qWait(30);
+        QCOMPARE(library->artists()->count(), 1); QCOMPARE(library->artists()->get(0).value("name").toString(), QString("Zulu"));
+        search->setProperty("text", ""); QTest::qWait(30); QCOMPARE(library->artists()->count(), 3);
+        auto *button = findItem(window->contentItem(), "groupSortButton"); auto *direction = findItem(window->contentItem(), "groupSortDirectionButton");
+        QVERIFY(button && direction); QVERIFY(button->isVisible() && direction->isVisible());
+        QVERIFY(button->mapToScene(QPointF()).x() >= 0); QVERIFY(direction->mapToScene(QPointF(direction->width(), direction->height())).x() <= window->width());
+        auto *grid = findItem(window->contentItem(), "groupGrid"); QVERIFY(grid);
+        QVERIFY(button->mapToScene(QPointF(0, button->height())).y() <= grid->mapToScene(QPointF()).y());
+        QVERIFY(grid->height() > 0); QCOMPARE(warnings.size(), 0);
+    }
+
     void initTestCase()
     {
+        registerPerformanceTypes();
         QVERIFY(m_temp.isValid());
         qputenv("XDG_DATA_HOME", m_temp.filePath("data").toUtf8());
         QDir().mkpath(m_temp.filePath("data"));
@@ -220,7 +580,577 @@ private slots:
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         qmlRegisterType<TrackListModel>("MusicPlayer", 1, 0, "TrackListModel");
         qmlRegisterType<PlaybackEngine>("MusicPlayer", 1, 0, "PlaybackEngine");
+    qmlRegisterType<DisplaySettings>("MusicPlayer", 1, 0, "DisplaySettings");
+    qmlRegisterType<Sharing>("MusicPlayer", 1, 0, "Sharing");
+    qmlRegisterSingletonType(QUrl("qrc:/components/Theme.qml"), "MusicPlayer", 1, 0, "Theme");
         qmlRegisterUncreatableType<LibraryViewModel>("MusicPlayer", 1, 0, "LibraryViewModel", QStringLiteral("Provided by the music library"));
+    }
+
+    void searchPublishesCompleteCounts_data()
+    {
+        QTest::addColumn<bool>("database");
+        QTest::newRow("in-memory") << false;
+        QTest::newRow("sqlite") << true;
+    }
+
+    void searchPublishesCompleteCounts()
+    {
+        QFETCH(bool, database);
+        QVariantList rows;
+        QStringList selected;
+        for (int i = 0; i < 512; ++i) {
+            const auto url = QString("file:///search/%1.wav").arg(i);
+            rows.append(QVariantMap{{"fileUrl", url}, {"title", i % 2 ? "East" : "West"}, {"artist", "Performer"}, {"album", "Album"},
+                {"albumId", "album"}, {"artistIds", QStringList{"performer"}}});
+            selected.append(url);
+        }
+        TrackMapReadCounter source; LibraryViewModel view;
+        LibraryDatabase store(m_temp.filePath("search-counts.sqlite")); QVERIFY(store.valid());
+        if (database) { QVERIFY(store.replace(rows, {}, {}, {})); view.setDatabase(&store, "song"); }
+        else { source.synchronize(rows, "fileUrl"); view.setSourceModel(&source); }
+        source.mapReads = 0;
+        int expected = 512; bool stable = true;
+        QSignalSpy counts(&view, &LibraryViewModel::countChanged);
+        connect(&view, &LibraryViewModel::countChanged, &view, [&] {
+            const auto *entries = qobject_cast<LibraryEntryModel *>(view.sourceModel());
+            stable &= !entries->synchronizing() && view.count() == expected && view.countMatchingUrls(selected) == expected;
+        });
+        for (const auto &search : {"East", "missing", "", "West", "East", ""}) {
+            expected = QString(search).isEmpty() ? 512 : QString(search) == "missing" ? 0 : 256;
+            const int before = counts.size(), oldCount = view.count();
+            view.setSearch(search);
+            QCOMPARE(view.count(), expected); QCOMPARE(view.countMatchingUrls(selected), expected);
+            QCOMPARE(view.fileUrls().size(), expected);
+            QCOMPARE(counts.size() - before, oldCount == expected ? 0 : 1);
+        }
+        QVERIFY(stable); QCOMPARE(source.mapReads, 0);
+        if (database) QCOMPARE(view.cachedEntryCount(), 0);
+        const auto chosen = view.entriesForUrls({selected[2], selected[0]}); QCOMPARE(chosen.size(), 2);
+        QCOMPARE(chosen[0].toMap().value("fileUrl").toString(), selected[0]);
+    }
+
+    void searchingWithSelectionsKeepsPlaybackAndModelsStable()
+    {
+        const auto path = m_temp.filePath("search-playback/Playing.wav"); QVERIFY(writeWave(path, 120));
+        QVariantList snapshot;
+        QStringList selected;
+        QVariantMap counts;
+        for (int i = 0; i < 1200; ++i) {
+            const auto file = i == 0 ? path : m_temp.filePath(QString("search-playback/%1.wav").arg(i));
+            auto track = releaseTrack(QString("Album %1").arg(i / 10), QString("Artist %1").arg(i % 24), i % 10 + 1, file, {}, "Collective");
+            track["title"] = QString(i % 2 ? "Needle %1" : "Other %1").arg(i); track["duration"] = 120000; track["probed"] = true;
+            track["artwork"] = QString();
+            track["comment"] = QString(400, QChar('x')); snapshot.append(track); selected.append(track.value("fileUrl").toString());
+            if (i % 7 == 0) counts[selected.last()] = 1;
+        }
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.setValue("library/snapshot", snapshot);
+        settings.setValue("library/playCounts", counts); settings.setValue("library/favorites", selected.mid(0, 30)); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); auto *library = window->findChild<TrackListModel *>("library");
+        auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(window && library && player);
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
+        player->audioOutput()->setMuted(true);
+        QVERIFY(QMetaObject::invokeMethod(window, "playUrl", Q_ARG(QVariant, selected[0])));
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search);
+        const auto playingId = window->property("currentQueueId");
+        for (const auto &page : {"Songs", "Favorites", "Most Played", "Albums", "Artists"}) {
+            QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString(page)));
+            window->setProperty("selectedUrls", selected);
+            for (const auto &query : {"N", "Ne", "Needle", "Needle 1", "missing", "", "Other", "", "Artist 2", ""}) {
+                search->setProperty("text", query); QTest::qWait(5); qml.collectGarbage();
+                auto *view = QString(page) == "Most Played" ? library->mostPlayed() : library->songs();
+                QCOMPARE(window->property("selectedVisibleCount").toInt(), view->count());
+                QVERIFY(view->cachedEntryCount() <= 192);
+                QCOMPARE(window->property("currentQueueId"), playingId);
+            }
+        }
+        QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Songs")));
+        window->setProperty("selectedUrls", selected); search->setProperty("text", "Needle"); QTest::qWait(30);
+        QCOMPARE(window->property("selectedVisibleCount").toInt(), 600);
+        click(window, "selectAllSongs"); QCOMPARE(window->property("selectedVisibleCount").toInt(), 0);
+        QCOMPARE(window->property("selectedCount").toInt(), 600);
+        search->setProperty("text", ""); QTest::qWait(20);
+        QCOMPARE(window->property("selectedVisibleCount").toInt(), 600);
+        click(window, "selectAllSongs"); QCOMPARE(window->property("selectedCount").toInt(), 1200);
+        QCOMPARE(window->property("currentUrl").toString(), selected[0]);
+        QVERIFY(player->position() > 0); QCOMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        QCOMPARE(warnings.size(), 0); player->stop();
+    }
+
+    void pagedLibraryRestoresSearchesAndUpdatesWithoutFullResidency()
+    {
+        const auto config = m_temp.filePath("paged-library.ini");
+        QVariantList snapshot;
+        for (int i = 0; i < 3000; ++i) {
+            const auto path = m_temp.filePath(QString("paged/%1.wav").arg(i));
+            auto song = releaseTrack("Shared album", i % 2 ? "Odd artist" : "Even artist", i + 1, path, {}, "Collective");
+            song["title"] = QString("Title %1").arg(i, 4, 10, QChar('0')); song["duration"] = 4000; song["probed"] = true;
+            snapshot.append(song);
+        }
+        QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{});
+        settings.setValue("library/snapshot", snapshot); settings.sync();
+        {
+            TrackListModel migrated(config, false); QVERIFY(migrated.pagedLibrary()); QCOMPARE(migrated.trackCount(), 3000);
+            QTRY_COMPARE_WITH_TIMEOUT(migrated.residentTrackCount(), 0, 3000);
+        }
+        settings.sync(); QVERIFY(!settings.contains("library/snapshot")); QVERIFY(!settings.contains("library/metadata"));
+        TrackListModel library(config, false); QCOMPARE(library.residentTrackCount(), 0); QCOMPARE(library.songs()->count(), 3000);
+        QCOMPARE(library.songs()->get(2999).value("title").toString(), QString("Title 2999"));
+        for (int row = 0; row < 3000; row += 71) QVERIFY(!library.songs()->get(row).isEmpty());
+        QVERIFY(library.songs()->cachedEntryCount() <= 192); QCOMPARE(library.residentTrackCount(), 0);
+        library.songs()->setSearch("Title 2999"); QCOMPARE(library.songs()->count(), 1);
+        library.songs()->setSearch("' OR 1=1 --"); QCOMPARE(library.songs()->count(), 0); library.songs()->setSearch("");
+        const auto url = snapshot[2999].toMap().value("fileUrl").toString();
+        library.toggleFavorite(url); QCOMPARE(library.favoriteCount(), 1); library.songs()->setFavoritesOnly(true);
+        QCOMPARE(library.songs()->count(), 1); QCOMPARE(library.songs()->get(0).value("fileUrl").toString(), url);
+        library.observeAudiblePlayback("paged-listen", url, 0, 4000, true, false, 0);
+        library.observeAudiblePlayback("paged-listen", url, 2000, 4000, true, false, 2000);
+        QCOMPARE(library.mostPlayed()->count(), 1); QCOMPARE(library.mostPlayed()->get(0).value("playCount").toInt(), 1);
+        QCOMPARE(library.residentTrackCount(), 0); QVERIFY(!library.scanning());
+        const auto lists = library.smartPlaylists(); QCOMPARE(lists[1].toMap().value("count").toInt(), 2999);
+        QCOMPARE(library.residentTrackCount(), 0);
+    }
+
+    void shortcutPreferencesRejectConflictsAndPersist()
+    {
+        const auto path = m_temp.filePath("shortcuts.ini");
+        {
+            DisplaySettings preferences(path);
+            QVERIFY(preferences.setShortcut("playPause", "Ctrl+Alt+P").isEmpty());
+            QVERIFY(!preferences.setShortcut("next", "Ctrl+Alt+P").isEmpty());
+            QVERIFY(!preferences.setShortcut("next", "Backspace").isEmpty());
+            QVERIFY(!preferences.setShortcut("next", "N").isEmpty());
+            QCOMPARE(preferences.shortcuts().value("next").toString(), QString("Ctrl+Right"));
+            QVERIFY(preferences.assignShortcut("seekForward", Qt::Key_L, Qt::ControlModifier | Qt::AltModifier).isEmpty());
+            preferences.setReducedMotion(true);
+        }
+        DisplaySettings restored(path); QVERIFY(restored.reducedMotion());
+        QCOMPARE(restored.shortcuts().value("playPause").toString(), QString("Ctrl+Alt+P"));
+        QCOMPARE(restored.shortcuts().value("seekForward").toString(), QString("Ctrl+Alt+L"));
+        QVERIFY(restored.setShortcut("next", "").isEmpty()); QVERIFY(restored.shortcuts().value("next").toString().isEmpty());
+        restored.resetShortcuts(); QCOMPARE(restored.shortcuts().value("playPause").toString(), QString("Space"));
+    }
+
+    void artworkCacheIsBoundedAndLoadsNamesWithSpaces()
+    {
+        auto memory = std::make_shared<ArtworkMemory>(); memory->images.setMaxCost(512);
+        ArtworkProvider provider(memory);
+        QImage image(600, 600, QImage::Format_RGB32); image.fill(QColor("#2255ee"));
+        QString source;
+        for (int i = 0; i < 12; ++i) {
+            const auto path = m_temp.filePath(QString("cover ü 100% %1.png").arg(i)); QVERIFY(image.save(path));
+            source = QUrl::fromLocalFile(path).toString();
+            QSize size;
+            const auto encoded = QString::fromLatin1(QUrl::toPercentEncoding(source));
+            const auto first = provider.requestImage(encoded, &size, QSize(128, 128));
+            QVERIFY(!first.isNull()); QCOMPARE(size, QSize(128, 128));
+            QCOMPARE(provider.requestImage(encoded, nullptr, QSize(128, 128)).cacheKey(), first.cacheKey());
+            QVERIFY(memory->images.totalCost() <= 512);
+        }
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        QQmlComponent component(&qml, QUrl("qrc:/components/CoverArt.qml"));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QQuickWindow window; window.resize(80, 80);
+        QScopedPointer<QObject> object(component.createWithInitialProperties({{"width", 80}, {"height", 80}, {"artwork", source}}));
+        auto *item = qobject_cast<QQuickItem *>(object.data()); QVERIFY(item); item->setParentItem(window.contentItem()); window.show();
+        QTRY_COMPARE_WITH_TIMEOUT(window.grabWindow().pixelColor(40, 40), QColor("#2255ee"), 3000);
+        QCOMPARE(warnings.size(), 0);
+        CacheManager manager; manager.setMemoryLimitMiB(8); QCOMPARE(manager.memoryLimitMiB(), 8);
+        QSignalSpy revisions(&manager, &CacheManager::revisionChanged);
+        manager.clearThumbnails(); QTRY_VERIFY(!manager.busy()); QVERIFY(revisions.size() > 0);
+        QCOMPARE(manager.memoryKiB(), 0);
+    }
+
+    void lazyScreensUnloadAndCustomShortcutsWork()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); window->resize(1100, 800); window->requestActivate();
+        QVERIFY(!window->findChild<QObject *>("metadataEditor")); QVERIFY(!window->findChild<QObject *>("displaySettingsDialog"));
+        QVERIFY(!window->findChild<QObject *>("nowPlayingPane")); QVERIFY(!window->findChild<QObject *>("listeningDashboard"));
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>()); QVERIFY(display);
+        display->resetShortcuts();
+        const auto reset = qScopeGuard([display] { display->setCapturingShortcut(false); display->resetShortcuts(); display->setReducedMotion(false); });
+        const auto path = m_temp.filePath("lazy/Shared.wav"); QVERIFY(writeWave(path, 30));
+        auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player");
+        player->audioOutput()->setMuted(true); library->addFiles({QUrl::fromLocalFile(path)}); QTRY_VERIFY(!library->scanning());
+        click(window, "navSongs"); QTest::qWait(40); click(window, "playAllButton");
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        click(window, "nowPlayingCoverButton"); QTRY_VERIFY(window->findChild<QObject *>("nowPlayingPane"));
+        click(window, "closeNowPlayingButton"); QTRY_VERIFY(!window->findChild<QObject *>("nowPlayingPane"));
+        QVERIFY(QMetaObject::invokeMethod(window, "openDisplaySettings"));
+        auto *button = findItem(window->contentItem(), "shortcut_playPause"); QVERIFY(button); button->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Space);
+        QTRY_VERIFY(display->capturingShortcut());
+        QTest::keyClick(window, Qt::Key_P, Qt::ControlModifier | Qt::AltModifier);
+        QTRY_VERIFY(!display->capturingShortcut()); QCOMPARE(display->shortcuts().value("playPause").toString(), QString("Ctrl+Alt+P"));
+        auto *dialog = window->findChild<QObject *>("displaySettingsDialog"); QVERIFY(dialog); QMetaObject::invokeMethod(dialog, "close");
+        QTRY_VERIFY(!window->findChild<QObject *>("displaySettingsDialog")); window->contentItem()->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Space); QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QTest::keyClick(window, Qt::Key_P, Qt::ControlModifier | Qt::AltModifier); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        player->pause(); display->setReducedMotion(true);
+        QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Listening dashboard")));
+        QTRY_VERIFY(window->findChild<QObject *>("listeningDashboard")); click(window, "navSongs");
+        QTRY_VERIFY(!window->findChild<QObject *>("listeningDashboard")); QCOMPARE(warnings.size(), 0);
+    }
+
+    void displaySettingsUseSystemFontsAndPersist()
+    {
+        const auto original = QGuiApplication::font();
+        const auto restoreFont = qScopeGuard([original] { QGuiApplication::setFont(original); });
+        const auto path = m_temp.filePath("display-settings.ini");
+        {
+            DisplaySettings display(path);
+            QSignalSpy fontChanged(&display, &DisplaySettings::systemFontChanged);
+            auto enlarged = original; enlarged.setPointSizeF(17);
+            QGuiApplication::setFont(enlarged);
+            QTRY_COMPARE(display.fontPointSize(), 17.0);
+            QCOMPARE(display.fontFamily(), QFontInfo(enlarged).family());
+            QVERIFY(!fontChanged.isEmpty());
+            display.setDensity("compact"); display.setTextScale(1.5);
+        }
+        DisplaySettings restored(path);
+        QCOMPARE(restored.density(), QString("compact")); QCOMPARE(restored.textScale(), 1.5);
+        QCOMPARE(restored.fontPointSize(), 17.0);
+        for (const auto &available : {QRect(0, 0, 1280, 720), QRect(1920, 0, 1024, 768), QRect(-900, -200, 720, 1280)}) {
+            const auto fitted = DisplaySettings::fittedGeometry(QRect(-10000, 4000, 1600, 1000), available);
+            QVERIFY(available.contains(fitted));
+            QCOMPARE(fitted.size(), QSize(1600, 1000).boundedTo(available.size()));
+        }
+        restored.reset(); QCOMPARE(restored.textScale(), 1.0); QCOMPARE(restored.density(), QString("automatic"));
+    }
+
+    void displayAdaptsToSmallWindowsAndLargeText_data()
+    {
+        QTest::addColumn<QSize>("size"); QTest::addColumn<double>("scale"); QTest::addColumn<QString>("density");
+        QTest::newRow("laptop") << QSize(1280, 720) << 1.0 << QString("automatic");
+        QTest::newRow("four-three") << QSize(1024, 768) << 1.25 << QString("comfortable");
+        QTest::newRow("small") << QSize(720, 480) << 1.0 << QString("compact");
+        QTest::newRow("large-text") << QSize(900, 640) << 1.75 << QString("automatic");
+        QTest::newRow("maximum-text") << QSize(1280, 800) << 2.0 << QString("comfortable");
+        QTest::newRow("portrait") << QSize(800, 1100) << 1.5 << QString("automatic");
+        QTest::newRow("ultrawide") << QSize(1920, 800) << 1.0 << QString("comfortable");
+    }
+
+    void displayAdaptsToSmallWindowsAndLargeText()
+    {
+        QFETCH(QSize, size); QFETCH(double, scale); QFETCH(QString, density);
+        const auto song = m_temp.filePath("display-library/Artist - A Song.wav"); QVERIFY(writeWave(song, 30));
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
+        settings.setValue("library/files", QStringList{song}); settings.sync();
+        const auto original = QGuiApplication::font();
+        const auto restoreFont = qScopeGuard([original] { QGuiApplication::setFont(original); });
+        auto desktopFont = original; desktopFont.setPointSizeF(11); QGuiApplication::setFont(desktopFont);
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>()); QVERIFY(display);
+        const auto restoreSettings = qScopeGuard([display] { display->reset(); });
+        auto *library = window->findChild<TrackListModel *>("library");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
+        QTRY_VERIFY(library->libraryReady() && !library->scanning());
+        QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, "Songs"));
+        window->setProperty("currentUrl", QUrl::fromLocalFile(song).toString());
+        display->setDensity(density); display->setTextScale(scale);
+        window->resize(size); QTest::qWait(70);
+        const auto insideWindow = [window](QQuickItem *item) {
+            const QRectF bounds(item->mapToScene(QPointF()), item->size());
+            return bounds.left() >= -1 && bounds.top() >= -1 && bounds.right() <= window->width() + 1
+                && bounds.bottom() <= window->height() + 1 && item->width() > 0 && item->height() > 0;
+        };
+        for (const auto &name : {"displaySettingsButton", "nowPlayingCoverButton", "playPauseButton", "previousButton", "nextButton",
+                 "queueButton", "crossfadeSettingsButton", "sleepTimerButton", "audioSettingsButton", "volumeSlider", "progressSlider"}) {
+            auto *control = findItem(window->contentItem(), name); QVERIFY2(control, name);
+            QVERIFY2(insideWindow(control), qPrintable(QString("%1 is outside %2×%3 at %4% text").arg(name).arg(size.width()).arg(size.height()).arg(scale * 100)));
+        }
+        auto *title = findItem(window->contentItem(), "footerSongTitle"); QVERIFY(title);
+        if (window->property("narrowLayout").toBool())
+            QVERIFY(!findItem(window->contentItem(), "appWordmark")->isVisible());
+        QTRY_VERIFY(std::abs(title->property("font").value<QFont>().pointSizeF() - 11 * scale) < 0.1);
+        QCOMPARE(title->property("font").value<QFont>().family(), QFontInfo(desktopFont).family());
+        auto changedFont = desktopFont; changedFont.setPointSizeF(14); QGuiApplication::setFont(changedFont);
+        QTRY_VERIFY(std::abs(title->property("font").value<QFont>().pointSizeF() - 14 * scale) < 0.1);
+        QTest::qWait(70);
+        QVERIFY(insideWindow(findItem(window->contentItem(), "displaySettingsButton")));
+        auto *list = findItem(window->contentItem(), "songList"); QVERIFY(list);
+        auto *row = findItem(window->contentItem(), "songRow0"); QVERIFY(row);
+        QVERIFY2(list->height() >= row->height() * 0.8, "The compact layout leaves no usable song rows");
+        for (const auto &name : {"songTitleLabel0", "songArtistLabel0"}) {
+            auto *label = findItem(window->contentItem(), name); QVERIFY(label);
+            const auto bounds = label->mapRectToItem(row, label->boundingRect());
+            QVERIFY(bounds.top() >= -1 && bounds.bottom() <= row->height() + 1);
+        }
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-display-" + QString::fromLatin1(QTest::currentDataTag()) + ".png");
+        // Settings remain reachable and scrollable even in the smallest viewport.
+        if (QString::fromLatin1(QTest::currentDataTag()) == "laptop") {
+            window->requestActivate(); QTest::qWait(30);
+            QTest::keyClick(window, Qt::Key_Comma, Qt::ControlModifier);
+        } else click(window, "displaySettingsButton");
+        auto *dialog = window->findChild<QObject *>("displaySettingsDialog"); QVERIFY(dialog);
+        QTRY_VERIFY(dialog->property("visible").toBool());
+        QVERIFY(dialog->property("height").toReal() <= window->height());
+        QVERIFY(dialog->property("width").toReal() <= window->width());
+        auto *preview = findItem(window->contentItem(), "displayFontPreview"); QVERIFY(preview);
+        if (QString::fromLatin1(QTest::currentDataTag()) == "laptop") {
+            auto *slider = findItem(window->contentItem(), "displayTextScaleSlider"); QVERIFY(slider);
+            slider->forceActiveFocus();
+            QTest::keyClick(window, Qt::Key_Home); QTRY_COMPARE(display->textScale(), 1.0);
+            QTest::keyClick(window, Qt::Key_Right); QTRY_COMPARE(display->textScale(), 1.05);
+        }
+        display->setTextScale(1.25);
+        QTRY_VERIFY(preview->property("font").value<QFont>().pointSizeF() > 14);
+        QMetaObject::invokeMethod(dialog, "close");
+        // The selection bar and batch editor must also fit at large font sizes.
+        display->setTextScale(scale); QTest::qWait(40);
+        click(window, "selectSong0"); QTest::qWait(40);
+        for (const auto &name : {"clearSongSelection", "queueSelectedSongs", "editSelectedMetadataButton", "selectedSongsOptions"}) {
+            auto *control = findItem(window->contentItem(), name); QVERIFY(control);
+            QVERIFY2(insideWindow(control), name);
+        }
+        click(window, "editSelectedMetadataButton");
+        auto *batch = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(batch);
+        QTRY_VERIFY(batch->property("ready").toBool());
+        // Tag readiness may precede the dialog's first layout polish.
+        auto *batchSave = findItem(window->contentItem(), "saveBatchMetadataButton"); QVERIFY(batchSave);
+        display->settleLayout(batchSave);
+        QVERIFY(batch->property("height").toReal() <= window->height());
+        QVERIFY(insideWindow(batchSave));
+        click(window, "cancelBatchMetadataButton");
+        QCOMPARE(warnings.size(), 0);
+    }
+
+    void startupLoadsSavedLibraryAndOnlyScansOnRequest()
+    {
+        const auto folder = m_temp.filePath("manual-library");
+        const auto first = folder + "/Artist/Old album/01 First.wav";
+        const auto added = folder + "/Artist/New album/02 Added.wav";
+        const auto config = m_temp.filePath("manual-library.ini");
+        QVERIFY(writeWave(first, 3, "Artist", "Old album", 1));
+        const auto url = QUrl::fromLocalFile(first).toString();
+        {
+            QSettings settings(config, QSettings::IniFormat);
+            settings.setValue("library/folders", QStringList{}); settings.sync();
+            TrackListModel library(config, false);
+            library.addFolder(QUrl::fromLocalFile(folder));
+            QTRY_COMPARE(library.trackCount(), 1); QTRY_VERIFY(!library.scanning());
+            QCOMPARE(library.genres()->count(), 1); QCOMPARE(library.genres()->get(0).value("name").toString(), QString("Unknown genre"));
+            library.toggleFavorite(url);
+        }
+        QVERIFY(writeWave(added, 3, "Artist", "New album", 2));
+        auto native = FileTags::read(first, folder, true);
+        QVERIFY(!FileTags::write(first, {{"album", "Externally edited"}}, "keep", {}, native.value("revision").toString(), folder).contains("error"));
+        {
+            TrackListModel restored(config, false);
+            QSignalSpy scanning(&restored, &TrackListModel::scanningChanged);
+            QTest::qWait(100);
+            QVERIFY(restored.libraryReady()); QVERIFY(!restored.scanning()); QCOMPARE(scanning.size(), 0);
+            QCOMPARE(restored.trackCount(), 1); QCOMPARE(restored.favoriteCount(), 1);
+            QCOMPARE(restored.trackForUrl(url).value("album").toString(), QStringLiteral("Old album"));
+            restored.rescan();
+            QTRY_COMPARE(restored.trackCount(), 2); QTRY_VERIFY(!restored.scanning());
+            QCOMPARE(restored.trackForUrl(url).value("album").toString(), QStringLiteral("Externally edited"));
+        }
+        // Migration also restores older caches without reading modified files.
+        {
+            QSettings settings(config, QSettings::IniFormat); settings.remove("library/snapshot"); settings.sync();
+            TrackListModel legacy(config, false);
+            QSignalSpy scanning(&legacy, &TrackListModel::scanningChanged);
+            QTest::qWait(70); QCOMPARE(legacy.trackCount(), 2); QCOMPARE(scanning.size(), 0);
+        }
+        QVERIFY(QFile::remove(added));
+        {
+            TrackListModel restored(config, false);
+            QCOMPARE(restored.trackCount(), 2); // No implicit filesystem checks.
+            restored.rescan(); QTRY_VERIFY(!restored.scanning()); QCOMPARE(restored.trackCount(), 1);
+        }
+    }
+
+    void batchMetadataPreservesIndividualTagsAndReportsStaleFiles()
+    {
+        const auto directory = m_temp.filePath("batch-native");
+        const auto config = directory + "/library.ini";
+        QDir().mkpath(directory);
+        QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QStringList urls, paths;
+        const auto cover = directory + "/cover.png";
+        QImage image(200, 200, QImage::Format_RGB32); image.fill(Qt::darkCyan); QVERIFY(image.save(cover));
+        for (int i = 0; i < 3; ++i) {
+            const auto path = directory + QString("/%1 Song.wav").arg(i + 1);
+            QVERIFY(writeWave(path, 3, "Artist " + QString::number(i), "Shared album", i + 1));
+            const auto before = FileTags::read(path, directory, true);
+            const auto result = FileTags::write(path, {{"title", "Title " + QString::number(i)}, {"comment", "Keep " + QString::number(i)}},
+                i == 0 ? "replace" : "keep", QUrl::fromLocalFile(cover), before.value("revision").toString(), directory);
+            QVERIFY2(!result.contains("error"), qPrintable(result.value("error").toString()));
+            paths.append(path); urls.append(QUrl::fromLocalFile(path).toString());
+        }
+        TrackListModel library(config, false);
+        QList<QUrl> files; for (const auto &path : paths) files.append(QUrl::fromLocalFile(path));
+        library.addFiles(files); QTRY_VERIFY(!library.scanning()); QCOMPARE(library.trackCount(), 3);
+        bool automaticScan = false;
+        connect(&library, &TrackListModel::scanningChanged, &library, [&] { automaticScan |= library.scanning(); });
+        QSignalSpy loaded(&library, &TrackListModel::batchMetadataLoaded), saved(&library, &TrackListModel::batchMetadataSaved);
+        library.loadBatchMetadata(urls); QTRY_COMPARE(loaded.size(), 1);
+        auto details = loaded.takeFirst().first().toMap();
+        QCOMPARE(details.value("fields").toMap().value("album").toString(), QStringLiteral("Shared album"));
+        QVERIFY(details.value("mixed").toMap().value("artist").toBool());
+        QVERIFY(details.value("mixed").toMap().value("trackNumber").toBool());
+        QVERIFY(details.value("editable").toBool());
+        QVERIFY(library.saveBatchMetadata(urls, {{"album", "One release"}, {"albumArtist", "The Collective"}, {"genre", "Jazz"}}, "keep", {}, details.value("revisions").toMap()));
+        QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
+        auto result = saved.takeFirst().first().toMap();
+        QCOMPARE(result.value("saved").toMap().size(), 3); QVERIFY(result.value("errors").toList().isEmpty());
+        QCOMPARE(library.albums()->count(), 1); QVERIFY(!automaticScan);
+        QCOMPARE(library.genres()->count(), 1); QCOMPARE(library.tracksForGroup("genre", "genre:jazz").size(), 3);
+        for (int i = 0; i < 3; ++i) {
+            const auto actual = FileTags::read(paths[i], directory + "/independent", true);
+            const auto fields = actual.value("fields").toMap();
+            QCOMPARE(fields.value("title").toString(), "Title " + QString::number(i));
+            QCOMPARE(fields.value("artist").toString(), "Artist " + QString::number(i));
+            QCOMPARE(fields.value("comment").toString(), "Keep " + QString::number(i));
+            QCOMPARE(fields.value("trackNumber").toString().toInt(), i + 1);
+            QCOMPARE(fields.value("album").toString(), QStringLiteral("One release"));
+            QCOMPARE(actual.value("embeddedCover").toBool(), i == 0);
+            QCOMPARE(library.trackForUrl(urls[i]).value("trackNumber").toInt(), i + 1);
+        }
+        library.loadBatchMetadata(urls); QTRY_COMPARE(loaded.size(), 1);
+        details = loaded.takeFirst().first().toMap();
+        const auto external = FileTags::read(paths[0], directory, true);
+        QVERIFY(!FileTags::write(paths[0], {{"comment", "Changed elsewhere"}}, "keep", {}, external.value("revision").toString(), directory).contains("error"));
+        const auto untouched = fileBytes(paths[0]);
+        QVERIFY(library.saveBatchMetadata(urls, {{"genre", "Soul"}}, "replace", QUrl::fromLocalFile(cover), details.value("revisions").toMap()));
+        QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
+        result = saved.takeFirst().first().toMap();
+        QCOMPARE(result.value("saved").toMap().size(), 2); QCOMPARE(result.value("errors").toList().size(), 1);
+        QCOMPARE(fileBytes(paths[0]), untouched); QVERIFY(!automaticScan);
+        QCOMPARE(library.genres()->count(), 2); QCOMPARE(library.tracksForGroup("genre", "genre:jazz").size(), 1);
+        QCOMPARE(library.tracksForGroup("genre", "genre:soul").size(), 2);
+        QCOMPARE(FileTags::read(paths[1], directory).value("fields").toMap().value("genre").toString(), QStringLiteral("Soul"));
+        QVERIFY(FileTags::read(paths[1], directory).value("embeddedCover").toBool());
+        QVERIFY(FileTags::read(paths[2], directory).value("embeddedCover").toBool());
+        const auto playlist = library.createPlaylist("Batch playlist");
+        QCOMPARE(library.addTracksToPlaylist(playlist, urls + urls), 3);
+        QCOMPARE(library.tracksForGroup("playlist", playlist).size(), 3);
+        library.setTracksFavorite(urls, true); QCOMPARE(library.favoriteCount(), 3);
+        QCOMPARE(library.removeTracksFromPlaylist(playlist, {urls[0], urls[2]}), 2);
+        QCOMPARE(library.tracksForGroup("playlist", playlist).size(), 1);
+        QVERIFY(!automaticScan);
+    }
+
+    void bulkTrashUpdatesSavedLibraryWithoutScanning()
+    {
+        const auto config = m_temp.filePath("batch-trash.ini");
+        QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QStringList urls, paths;
+        QList<QUrl> files;
+        for (int i = 0; i < 3; ++i) {
+            const auto path = m_temp.filePath(QString("batch-trash/%1.wav").arg(i)); QVERIFY(writeWave(path));
+            paths.append(path); files.append(QUrl::fromLocalFile(path)); urls.append(files.last().toString());
+        }
+        {
+            TrackListModel library(config, false); library.addFiles(files); QTRY_VERIFY(!library.scanning());
+            const auto id = library.createPlaylist("Trash batch"); library.addTracksToPlaylist(id, urls); library.setTracksFavorite(urls, true);
+            QSignalSpy removed(&library, &TrackListModel::trackRemoved);
+            QStandardPaths::setTestModeEnabled(false); // Use this test's isolated XDG_DATA_HOME for Trash.
+            const auto result = library.trashTracks({urls[0], urls[0], urls[1], "file:///missing-song.wav"});
+            QStandardPaths::setTestModeEnabled(true);
+            QCOMPARE(result.value("removed").toStringList().size(), 2); QCOMPARE(result.value("errors").toList().size(), 1);
+            QCOMPARE(removed.size(), 2); QCOMPARE(library.trackCount(), 1); QCOMPARE(library.favoriteCount(), 1);
+            QVERIFY(!library.scanning()); QCOMPARE(library.tracksForGroup("playlist", id).size(), 1);
+            QVERIFY(!QFileInfo::exists(paths[0])); QVERIFY(!QFileInfo::exists(paths[1])); QVERIFY(QFileInfo::exists(paths[2]));
+        }
+        TrackListModel restored(config, false); QCOMPARE(restored.trackCount(), 1); QVERIFY(!restored.scanning());
+        QCOMPARE(restored.tracks().first().toMap().value("fileUrl").toString(), urls[2]);
+    }
+
+    void collectionContextMenusAndBatchEditorAreUsable()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QStringList urls, paths;
+        QList<QUrl> files;
+        for (int i = 0; i < 3; ++i) {
+            const auto path = m_temp.filePath(QString("batch-ui/Album/%1 Song.wav").arg(i + 1));
+            QVERIFY(writeWave(path, 30, i == 1 ? "B Artist" : "A Artist", "Original album", i + 1));
+            const auto native = FileTags::read(path, m_temp.path(), true);
+            QVERIFY(!FileTags::write(path, {{"title", "Song " + QString::number(i + 1)}, {"albumArtist", "Collective"}}, "keep", {}, native.value("revision").toString(), m_temp.path()).contains("error"));
+            files.append(QUrl::fromLocalFile(path)); paths.append(path); urls.append(files.last().toString());
+        }
+        { TrackListModel seed(settings.fileName(), false); seed.addFiles(files); QTRY_VERIFY(!seed.scanning()); }
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library");
+        auto *player = window->findChild<PlaybackEngine *>("player"); player->audioOutput()->setMuted(true);
+        QSignalSpy scanning(library, &TrackListModel::scanningChanged);
+        QTest::qWait(80); QCOMPARE(library->trackCount(), 3); QCOMPARE(scanning.size(), 0);
+        QVERIFY(!window->findChild<QObject *>("hero"));
+        click(window, "navAlbums"); QTest::qWait(60);
+        auto *card = findItem(window->contentItem(), "groupCard0"); QVERIFY(card);
+        const auto rightClick = [&] {
+            card = findItem(window->contentItem(), "groupCard0");
+            QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, card->mapToScene(QPointF(40, 40)).toPoint());
+            QTest::qWait(60);
+        };
+        rightClick(); QVERIFY(window->findChild<QObject *>("groupMenu")->property("visible").toBool());
+        QVERIFY(window->property("collectionName").toString().isEmpty()); QVERIFY(window->property("currentUrl").toString().isEmpty());
+        click(window, "groupAddToQueue");
+        QCOMPARE(qmlList(window, "queueUrls"), QVariantList({urls[0], urls[1], urls[2]}));
+        QMetaObject::invokeMethod(window, "playUrl", Q_ARG(QVariant, urls[0])); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        rightClick(); click(window, "groupPlayNext");
+        QCOMPARE(qmlList(window, "queueUrls"), QVariantList({urls[0], urls[0], urls[1], urls[2], urls[1], urls[2]}));
+        click(window, "navArtists"); QTest::qWait(60); rightClick();
+        click(window, "groupDelete"); auto *trash = window->findChild<QObject *>("trashSongDialog"); QTRY_VERIFY(trash->property("visible").toBool());
+        QCOMPARE(qmlList(trash, "pendingTracks").size(), 2);
+        QMetaObject::invokeMethod(trash, "reject"); for (const auto &path : paths) QVERIFY(QFileInfo::exists(path));
+        click(window, "navAlbums"); QTest::qWait(60); click(window, "groupCard0"); QTest::qWait(60);
+        const auto currentId = window->property("currentQueueId");
+        click(window, "selectSong0"); QCOMPARE(window->property("selectedCount").toInt(), 1);
+        QCOMPARE(window->property("currentQueueId"), currentId); QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QCOMPARE(findItem(window->contentItem(), "selectAllSongs")->property("checkState").toInt(), int(Qt::PartiallyChecked));
+        click(window, "selectAllSongs"); QCOMPARE(window->property("selectedCount").toInt(), 3);
+        click(window, "selectAllSongs"); QCOMPARE(window->property("selectedCount").toInt(), 0);
+        click(window, "editAlbumMetadataButton"); QPointer<QObject> editor = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(editor);
+        QTRY_VERIFY(editor->property("ready").toBool()); QCOMPARE(qmlList(editor, "urls").size(), 3);
+        const auto original = fileBytes(paths[0]); click(window, "cancelBatchMetadataButton"); QCOMPARE(fileBytes(paths[0]), original);
+        click(window, "selectSong0"); click(window, "selectSong1"); QTest::qWait(60);
+        QVERIFY(findItem(window->contentItem(), "selectionBar")->isVisible());
+        click(window, "editSelectedMetadataButton"); editor = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(editor);
+        QTRY_VERIFY(editor->property("ready").toBool()); QCOMPARE(qmlList(editor, "urls").size(), 2);
+        QCOMPARE(qmlList(editor, "urls"), QVariantList({urls[0], urls[1]}));
+        const auto initialValue = editor->property("initial");
+        const auto initial = initialValue.metaType() == QMetaType::fromType<QJSValue>() ? initialValue.value<QJSValue>().toVariant().toMap() : initialValue.toMap();
+        QVERIFY(initial.value("mixed").toMap().value("artist").toBool());
+        QVERIFY(!findItem(window->contentItem(), "batchMetadata_artist")->isEnabled());
+        click(window, "batchApply_album");
+        auto *field = findItem(window->contentItem(), "batchMetadata_album"); QVERIFY(field && field->isEnabled()); field->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+        for (const auto character : QStringLiteral("Retagged album")) QTest::keyClick(window, character.toLatin1());
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-batch-editor.png");
+        QSignalSpy saved(library, &TrackListModel::batchMetadataSaved);
+        click(window, "saveBatchMetadataButton"); QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
+        QVERIFY(!editor || !editor->property("visible").toBool());
+        QCOMPARE(library->trackForUrl(urls[0]).value("album").toString(), QStringLiteral("Retagged album"));
+        QCOMPARE(library->trackForUrl(urls[1]).value("album").toString(), QStringLiteral("Retagged album"));
+        QCOMPARE(library->trackForUrl(urls[2]).value("album").toString(), QStringLiteral("Original album"));
+        QCOMPARE(FileTags::read(paths[0], m_temp.path()).value("fields").toMap().value("title").toString(), QStringLiteral("Song 1"));
+        QCOMPARE(library->trackForUrl(urls[1]).value("trackNumber").toInt(), 2);
+        QCOMPARE(window->property("currentQueueId"), currentId);
+        QTest::qWait(60);
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-batch-selection.png");
+        click(window, "navSongs"); QTest::qWait(40); QCOMPARE(window->property("selectedCount").toInt(), 0);
+        click(window, "selectSong0"); click(window, "selectSong1");
+        click(window, "selectedSongsOptions"); QTest::qWait(40); click(window, "deleteSelectedSongs");
+        QTRY_VERIFY(trash->property("visible").toBool());
+        QStandardPaths::setTestModeEnabled(false);
+        QVERIFY(QMetaObject::invokeMethod(trash, "accept"));
+        QStandardPaths::setTestModeEnabled(true);
+        QTRY_COMPARE(library->trackCount(), 1);
+        QCOMPARE(window->property("currentUrl").toString(), urls[2]);
+        for (const auto &url : qmlList(window, "queueUrls")) QCOMPARE(url.toString(), urls[2]);
+        QVERIFY(!QFileInfo::exists(paths[0])); QVERIFY(!QFileInfo::exists(paths[1])); QVERIFY(QFileInfo::exists(paths[2]));
+        QCOMPARE(warnings.size(), 0); player->stop();
     }
 
     void embeddedTagsAndCoversTravelWithTheAudio_data()
@@ -316,15 +1246,17 @@ private slots:
         QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         QTRY_VERIFY(library->libraryReady() && !library->scanning());
         const auto playlist = library->createPlaylist("Keep my place", url); QVERIFY(!playlist.isEmpty());
         click(window, "navSongs"); QTest::qWait(60); click(window, "playAllButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
         const auto original = fileBytes(audio);
         click(window, "songOptions0"); QTest::qWait(50); click(window, "menuEditMetadata");
-        auto *editor = window->findChild<QObject *>("metadataEditor"); QVERIFY(editor); QTRY_VERIFY(editor->property("ready").toBool());
+        QPointer<QObject> editor = window->findChild<QObject *>("metadataEditor"); QVERIFY(editor); QTRY_VERIFY(editor->property("ready").toBool());
         auto *title = findItem(window->contentItem(), "metadata_title"); QVERIFY(title); title->setProperty("text", "Discard this draft");
         click(window, "cancelMetadataButton"); QCOMPARE(fileBytes(audio), original);
-        click(window, "songOptions0"); QTest::qWait(50); click(window, "menuEditMetadata"); QTRY_VERIFY(editor->property("ready").toBool());
+        click(window, "songOptions0"); QTest::qWait(50); click(window, "menuEditMetadata");
+        editor = window->findChild<QObject *>("metadataEditor"); QVERIFY(editor); QTRY_VERIFY(editor->property("ready").toBool());
         title = findItem(window->contentItem(), "metadata_title"); QVERIFY(title); QCOMPARE(title->property("text").toString(), QString());
         title->setProperty("text", QString::fromUtf8("Édition finale"));
         findItem(window->contentItem(), "metadata_artist")->setProperty("text", "Manual artist");
@@ -341,7 +1273,7 @@ private slots:
         const auto savePosition = save->mapToScene(QPointF()); QVERIFY(savePosition.y() >= 0 && savePosition.y() + save->height() <= window->height());
         QSignalSpy saved(library, &TrackListModel::metadataSaved), errors(library, &TrackListModel::metadataError);
         click(window, "saveMetadataButton"); QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000); QTRY_VERIFY(!library->scanning());
-        QCOMPARE(errors.size(), 0); QVERIFY(!editor->property("visible").toBool());
+        QCOMPARE(errors.size(), 0); QVERIFY(!editor || !editor->property("visible").toBool());
         const auto track = library->trackForUrl(url); QCOMPARE(track.value("title").toString(), QString::fromUtf8("Édition finale"));
         QCOMPARE(track.value("artist").toString(), QStringLiteral("Manual artist")); QCOMPARE(track.value("albumArtist").toString(), QStringLiteral("The Collective"));
         QCOMPARE(track.value("trackNumber").toInt(), 3); QCOMPARE(track.value("discNumber").toInt(), 2);
@@ -429,7 +1361,8 @@ private slots:
         for (const int checkpoint : {4800, 9800}) {
             while (clock.elapsed() < checkpoint) QTest::qWait(20);
             const auto before = engine.outputStatistics();
-            library.savePlaybackSession({{"currentId", "long"}, {"position", engine.position()}});
+            const QVariantMap entry{{"id", "long"}, {"fileUrl", song.toString()}};
+            library.savePlaybackSession({{"queue", QVariantList{entry}}, {"source", QVariantList{entry}}, {"currentId", "long"}, {"position", engine.position()}});
             // Deterministic slow-storage/UI work, much longer than the output buffer.
             // No Qt events are processed on the interface thread during this time.
             QThread::msleep(600);
@@ -446,7 +1379,7 @@ private slots:
         QVERIFY(library.dashboard().value("totalMs").toLongLong() > 10000);
         QCOMPARE(errors.size(), 0);
         settings.sync();
-        QCOMPARE(settings.value("player/session").toMap().value("currentId").toString(), QString("long"));
+        QCOMPARE(library.playbackSession().value("currentId").toString(), QString("long"));
         engine.stop();
     }
 
@@ -462,6 +1395,7 @@ private slots:
         qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
         auto *library = window->findChild<TrackListModel *>("library");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         auto *engine = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && engine);
         QTRY_VERIFY(!library->scanning());
         engine->audioOutput()->setMuted(true);
@@ -477,7 +1411,7 @@ private slots:
         QCOMPARE(advanced.size(), 1); QCOMPARE(engine->source(), second);
         QCOMPARE(window->property("currentQueueId").toString(), secondId);
         settings.sync();
-        QCOMPARE(settings.value("player/session").toMap().value("currentId").toString(), secondId);
+        QCOMPARE(library->playbackSession().value("currentId").toString(), secondId);
         QTRY_COMPARE(library->trackForUrl(first.toString()).value("playCount").toInt(), 1);
 
         engine->pause(); const auto paused = engine->position();
@@ -528,7 +1462,7 @@ private slots:
         QCOMPARE(errors.size(), 0);
     }
 
-    void miniPlayerTransitionControlsWork()
+    void mainPlayerTransitionControlsWork()
     {
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
         settings.setValue("library/analysis", QVariantMap{{"old-file", QVariantMap{{"bpm", 120}}}});
@@ -563,82 +1497,67 @@ private slots:
         click(window, "sleepTimerButton"); QTest::qWait(50); click(window, "cancelSleepTimerButton"); QCOMPARE(player->sleepRemainingMs(), 0);
         click(window, "sleepAfterTrackButton"); QVERIFY(player->sleepAfterTrack());
         QMetaObject::invokeMethod(window->findChild<QObject *>("sleepTimerPopup"), "close");
-        click(window, "miniPlayerButton"); auto *mini = window->findChild<QQuickWindow *>("miniPlayer"); QVERIFY(mini);
-        QTRY_VERIFY(mini->isVisible() && window->visibility() == QWindow::Minimized); QVERIFY(mini->flags().testFlag(Qt::WindowStaysOnTopHint));
-        click(mini, "miniPlayPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
-        click(mini, "miniPlayPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-        click(mini, "miniFavoriteButton"); QCOMPARE(library->favoriteCount(), 1);
-        mini->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-mini-player.png");
-        click(mini, "restoreMainPlayerButton"); QTRY_VERIFY(window->isVisible() && !mini->isVisible());
+        click(window, "playPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        click(window, "playPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        click(window, "footerFavoriteButton"); QCOMPARE(library->favoriteCount(), 1);
+        QVERIFY(window->isVisible());
+        QVERIFY(!window->findChild<QQuickWindow *>("miniPlayer"));
         player->cancelSleep(); player->setCrossfadeEnabled(false);
         window->resize(900, 640); QTest::qWait(60); click(window, "crossfadeSettingsButton"); QTest::qWait(60);
         QVERIFY(findItem(window->contentItem(), "crossfadeSecondsBox")->mapToScene(QPointF()).y() >= 0);
-        for (const auto &name : {"crossfadeSettingsButton", "sleepTimerButton", "miniPlayerButton"}) {
+        for (const auto &name : {"crossfadeSettingsButton", "sleepTimerButton", "audioSettingsButton"}) {
             auto *button = findItem(window->contentItem(), name); QVERIFY(button);
             const auto point = button->mapToScene(QPointF()); QVERIFY(point.x() >= 0 && point.x() + button->width() <= window->width());
         }
         QCOMPARE(warnings.size(), 0); player->stop();
     }
 
-    void miniPlayerCanAlwaysReturnToTheFullPlayer()
+    void mainPlayerStaysReachableAcrossWindowStates()
     {
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-        auto *mini = window->findChild<QQuickWindow *>("miniPlayer"); QVERIFY(mini);
+        QVERIFY(!window->findChild<QQuickWindow *>("miniPlayer"));
+        QVERIFY(!window->findChild<QObject *>("miniPlayerButton"));
+        auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display);
+        QVERIFY(!display->shortcuts().contains("miniPlayer"));
+        for (const auto &value : display->shortcutOptions())
+            QVERIFY(value.toMap().value("id").toString() != QStringLiteral("miniPlayer"));
         QTRY_VERIFY(window->findChild<TrackListModel *>("library")->libraryReady());
-        click(window, "miniPlayerButton");
-        QTRY_VERIFY(mini->isVisible());
-        // Tool/transient windows can disappear with their owner on Linux.
-        QCOMPARE(mini->transientParent(), nullptr);
-        QCOMPARE(mini->flags() & Qt::WindowType_Mask, Qt::Window);
-        QVERIFY(mini->flags().testFlag(Qt::WindowMinimizeButtonHint));
-        QCOMPARE(window->visibility(), QWindow::Minimized);
-        QVERIFY(window->isVisible()); // The full player's taskbar entry remains available.
-
-        click(mini, "restoreMainPlayerButton");
-        QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
         QVERIFY(QTest::qWaitForWindowExposed(window));
-        QTest::qWait(60); // Let native window-state events settle before the next user action.
-        click(window, "miniPlayerButton");
-        QTRY_VERIFY(mini->isVisible() && window->visibility() == QWindow::Minimized);
-        window->showNormal(); // Restore the full player from its taskbar entry.
-        QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
-        QVERIFY(QTest::qWaitForWindowExposed(window));
-        QTest::qWait(60);
-
-        click(window, "miniPlayerButton");
-        QTRY_VERIFY(mini->isVisible()); mini->hide(); // Unexpected mini-window loss must recover the app.
-        QTRY_COMPARE(window->visibility(), QWindow::Windowed);
-        QVERIFY(QTest::qWaitForWindowExposed(window));
-        QTest::qWait(60);
-        mini->setPosition(-100000, -100000);
-        click(window, "miniPlayerButton");
-        QTRY_VERIFY(mini->isVisible());
-        QVERIFY(mini->screen()->geometry().contains(mini->geometry()));
-        mini->showMinimized();
-        QTRY_COMPARE(mini->visibility(), QWindow::Minimized);
-        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
-        QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
-
         window->requestActivate(); QTest::qWait(40);
         QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier);
-        QTRY_VERIFY(mini->isVisible() && window->visibility() == QWindow::Minimized);
-        mini->requestActivate(); QTest::qWait(40);
-        QTest::keyClick(mini, Qt::Key_M, Qt::ControlModifier);
-        QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
+        QCOMPARE(window->visibility(), QWindow::Windowed);
+        window->showMinimized();
+        QTRY_COMPARE(window->visibility(), QWindow::Minimized);
+        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
+        QTRY_COMPARE(window->visibility(), QWindow::Windowed);
         QVERIFY(QTest::qWaitForWindowExposed(window));
-        QTest::qWait(60);
-        click(window, "miniPlayerButton"); QTRY_VERIFY(mini->isVisible());
-        click(mini, "restoreMainPlayerButton"); QTRY_VERIFY(!mini->isVisible() && window->visibility() == QWindow::Windowed);
+        window->showMaximized(); QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
+        QCOMPARE(window->visibility(), QWindow::Maximized);
+        window->showMinimized(); QTRY_COMPARE(window->visibility(), QWindow::Minimized);
+        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
+        QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+        QVERIFY(QMetaObject::invokeMethod(window, "toggleFullscreenNowPlaying"));
+        QTRY_COMPARE(window->visibility(), QWindow::FullScreen);
+        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
+        QCOMPARE(window->visibility(), QWindow::FullScreen);
+        QVERIFY(window->property("fullscreenNowPlaying").toBool());
+        window->showMinimized(); QTRY_COMPARE(window->visibility(), QWindow::Minimized);
+        QVERIFY(QMetaObject::invokeMethod(window, "desktopCommand", Q_ARG(QVariant, "raise"), Q_ARG(QVariant, QVariant())));
+        QTRY_COMPARE(window->visibility(), QWindow::FullScreen);
+        QVERIFY(window->property("fullscreenNowPlaying").toBool());
+        QVERIFY(QMetaObject::invokeMethod(window, "toggleFullscreenNowPlaying"));
+        QTRY_COMPARE(window->visibility(), QWindow::Maximized);
         QCOMPARE(warnings.size(), 0);
     }
 
     void closeButtonQuitsTheWholeApplication_data()
     {
         QTest::addColumn<QString>("mode");
-        for (const auto &mode : {"main-idle", "main-playing", "main-while-mini", "mini-playing", "desktop-main", "desktop-mini"})
+        for (const auto &mode : {"main-idle", "main-playing", "minimized-playing", "desktop-main", "desktop-minimized", "fullscreen-playing", "desktop-fullscreen"})
             QTest::newRow(mode) << QString(mode);
     }
 
@@ -948,6 +1867,7 @@ private slots:
         QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         auto *library = window->findChild<TrackListModel *>("library");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         auto *player = window->findChild<PlaybackEngine *>("player");
         QVERIFY(library && player);
         QTRY_COMPARE(library->trackCount(), 3);
@@ -1005,7 +1925,9 @@ private slots:
         QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         auto *library = window->findChild<TrackListModel *>("library");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         QVERIFY(library);
+        QTRY_COMPARE_WITH_TIMEOUT(library->trackCount(), albumCount * tracksPerAlbum, 10000);
         QTRY_COMPARE_WITH_TIMEOUT(library->albums()->count(), albumCount, 10000);
         QCOMPARE(library->trackCount(), albumCount * tracksPerAlbum);
         QSignalSpy resets(library->albums(), &QAbstractItemModel::modelReset);
@@ -1285,6 +2207,122 @@ private slots:
         QCOMPARE(resets.size(), 0);
     }
 
+    void mostPlayedRefiltersAndResortsExistingRowsImmediately()
+    {
+        LibraryEntryModel source;
+        LibraryViewModel played, rare;
+        played.setSourceModel(&source); played.setPlayedOnly(true); played.setSortKey("Plays");
+        rare.setSourceModel(&source); rare.setCollectionKind("smart"); rare.setCollectionId("rare"); rare.setSortKey("Rare");
+        QVariantList entries;
+        for (int i = 0; i < 120; ++i)
+            entries.append(QVariantMap{{"fileUrl", QString("file:///ranked/%1.wav").arg(i)},
+                {"title", QString("Song %1").arg(i, 3, 10, QLatin1Char('0'))}, {"playCount", i % 6}});
+        source.synchronize(entries, "fileUrl");
+        QSignalSpy resets(&played, &QAbstractItemModel::modelReset);
+        for (int pass = 0; pass < 8; ++pass) {
+            for (int i = 0; i < entries.size(); ++i) {
+                auto entry = entries[i].toMap(); entry["playCount"] = (i + pass * 7) % 9; entries[i] = entry;
+            }
+            source.synchronize(entries, "fileUrl");
+            const auto expectedCount = std::count_if(entries.cbegin(), entries.cend(), [](const auto &entry) { return entry.toMap().value("playCount").toInt() > 0; });
+            QCOMPARE(played.count(), expectedCount);
+            qint64 previous = std::numeric_limits<qint64>::max();
+            for (int row = 0; row < played.count(); ++row) {
+                const auto count = played.get(row).value("playCount").toLongLong();
+                QVERIFY(count > 0); QVERIFY2(count <= previous, qPrintable(QString("Pass %1, row %2: %3 follows %4").arg(pass).arg(row).arg(count).arg(previous)));
+                previous = count;
+            }
+            previous = 0;
+            for (int row = 0; row < rare.count(); ++row) {
+                const auto count = rare.get(row).value("playCount").toLongLong();
+                QVERIFY(count >= 1 && count <= 4); QVERIFY(count >= previous); previous = count;
+            }
+        }
+        QCOMPARE(resets.size(), 0);
+    }
+
+    void mostPlayedVisibleRowsStayRankedWhenAListenIsAdded_data()
+    {
+        QTest::addColumn<bool>("legacySwitch");
+        QTest::newRow("current") << false;
+        QTest::newRow("legacy-page-switch") << true;
+    }
+
+    void mostPlayedVisibleRowsStayRankedWhenAListenIsAdded()
+    {
+        QFETCH(bool, legacySwitch);
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
+        QVariantList tracks;
+        QVariantMap counts;
+        for (int i = 0; i < 1000; ++i) {
+            const auto path = m_temp.filePath(QString("most-played-live/%1 - Song.wav").arg(i, 4, 10, QLatin1Char('0')));
+            auto track = releaseTrack("A library", "Artist", i + 1, path);
+            track["title"] = QString("Song %1").arg(i, 4, 10, QLatin1Char('0'));
+            track["format"] = "WAV"; track["artwork"] = ""; track["duration"] = 1000; track["probed"] = true;
+            tracks.append(track);
+            if (i >= 900) counts[track.value("fileUrl").toString()] = (i - 900) / 20 + 1;
+        }
+        settings.setValue("library/snapshot", tracks); settings.setValue("library/playCounts", counts); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        QFile viewSource(":/main.qml"); QVERIFY(viewSource.open(QIODevice::ReadOnly));
+        auto view = viewSource.readAll();
+        if (legacySwitch) view.replace("model: win.restoringNavigation ? null : win.visibleTracks", "model: win.visibleTracks");
+        qml.loadData(view, QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+        display->reset(); const auto restoreDisplay = qScopeGuard([display] { display->reset(); });
+        window->resize(1280, 850); QTest::qWait(50);
+        click(window, "navSongs"); QTest::qWait(40);
+        click(window, "navMostPlayed"); QTest::qWait(60);
+        auto *list = findItem(window->contentItem(), "songList"); QVERIFY(list);
+        auto *content = list->property("contentItem").value<QQuickItem *>(); QVERIFY(content);
+        auto *ranking = library->mostPlayed(); QCOMPARE(ranking->count(), 100);
+        const auto displayError = [&]() -> QString {
+            int checked = 0;
+            for (auto *row : content->childItems()) {
+                if (!row->objectName().startsWith("songRow")) continue;
+                const int index = row->property("index").toInt(); if (index < 0 || index >= ranking->count()) continue;
+                const auto bounds = row->mapRectToItem(list, row->boundingRect());
+                if (bounds.bottom() <= 0 || bounds.top() >= list->height()) continue;
+                const auto value = row->property("track");
+                const auto shown = value.metaType() == QMetaType::fromType<QJSValue>() ? value.value<QJSValue>().toVariant().toMap() : value.toMap();
+                const auto expected = ranking->get(index);
+                if (shown.value("fileUrl") != expected.value("fileUrl") || shown.value("playCount").toInt() <= 0 || shown.value("playCount") != expected.value("playCount"))
+                    return QString("Row %1 shows %2 (%3 plays), expected %4 (%5 plays)").arg(index).arg(shown.value("title").toString()).arg(shown.value("playCount").toLongLong()).arg(expected.value("title").toString()).arg(expected.value("playCount").toLongLong());
+                auto *label = findItem(row, "songTitleLabel" + QString::number(index));
+                if (!label || label->property("text").toString() != expected.value("title").toString()) return QString("Stale title at row %1").arg(index);
+                auto *playCount = findItem(row, "songPlayCountLabel" + QString::number(index));
+                if (!playCount || playCount->property("text").toString().toLongLong() != expected.value("playCount").toLongLong()) return QString("Stale count at row %1").arg(index);
+                ++checked;
+            }
+            return checked > 0 ? QString() : QString("No visible rows");
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(displayError(), QString(), 1000);
+        const auto promoted = tracks[0].toMap().value("fileUrl").toString();
+        for (int play = 0; play < 6; ++play) {
+            const auto token = "qualified-" + QString::number(play);
+            library->observeAudiblePlayback(token, promoted, 0, 1000, true, false, 0);
+            library->observeAudiblePlayback(token, promoted, 500, 1000, true, true, 500);
+            QCOMPARE(library->trackForUrl(promoted).value("playCount").toInt(), play + 1);
+            QMetaObject::invokeMethod(list, "positionViewAtBeginning"); QMetaObject::invokeMethod(list, "forceLayout");
+            QCOMPARE(displayError(), QString());
+            qint64 previous = std::numeric_limits<qint64>::max();
+            for (const auto &entry : ranking->entries()) {
+                const auto count = entry.toMap().value("playCount").toLongLong();
+                QVERIFY(count > 0 && count <= previous); previous = count;
+            }
+            QMetaObject::invokeMethod(list, "positionViewAtEnd"); QMetaObject::invokeMethod(list, "forceLayout");
+            QCOMPARE(displayError(), QString());
+        }
+        QCOMPARE(ranking->get(0).value("fileUrl").toString(), promoted);
+        for (int repeat = 0; repeat < 3; ++repeat) {
+            click(window, "navSongs"); QTest::qWait(25);
+            click(window, "navMostPlayed"); QTest::qWait(40); QTRY_COMPARE_WITH_TIMEOUT(displayError(), QString(), 1000);
+        }
+        QCOMPARE(warnings.size(), 0);
+    }
+
     void playlistsPersistAndRemovingSongsKeepsTheirFiles()
     {
         const QString first = m_temp.filePath("playlists/Arlo - First.wav");
@@ -1387,6 +2425,7 @@ private slots:
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         QTRY_VERIFY(library->libraryReady() && !library->scanning());
         if (kind == "playlist") {
             const auto id = library->createPlaylist("Behind Now Playing"); QVERIFY(!id.isEmpty());
@@ -1466,7 +2505,7 @@ private slots:
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
         click(window, "nowPlayingPlayPauseButton");
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
-        click(window, "nowPlayingArtistLink");
+        QVERIFY(clickLink(window, "nowPlayingArtistLink"));
         QCOMPARE(window->property("activePage").toString(), QStringLiteral("Artists"));
         QCOMPARE(library->songs()->count(), 1);
         QVERIFY(!window->property("nowPlayingOpen").toBool());
@@ -1591,6 +2630,686 @@ private slots:
         QVERIFY(restored.dashboard().value("totalMs").toLongLong() >= 2000);
     }
 
+    void automaticQueuesReplaceTheOldestAndKeepSessions()
+    {
+        const auto file = m_temp.filePath("automatic-queues.json");
+        auto session = [](const QString &label, int position) {
+            const QVariantMap entry{{"id", label}, {"fileUrl", "file:///music/" + label + ".wav"}};
+            return QVariantMap{{"queue", QVariantList{entry}}, {"source", QVariantList{entry}},
+                {"currentId", label}, {"position", position}, {"shuffle", true}, {"repeat", 2}};
+        };
+        QString second, newest;
+        {
+            QueueStore store(file, {}, true);
+            const auto initial = store.activeId();
+            const auto first = store.startPlaybackQueue("Album A", session("A", 1234));
+            QCOMPARE(first, initial); QCOMPARE(store.queues().size(), 1);
+            second = store.startPlaybackQueue("Playlist B", session("B", 5678));
+            QVERIFY(!store.startPlaybackQueue("Artist C", session("C", 9000)).isEmpty());
+            QVERIFY(!store.startPlaybackQueue("Most Played", session("D", 1000)).isEmpty());
+            QCOMPARE(store.queues().size(), 4); QVERIFY(store.activate(first));
+            const auto before = store.queues();
+            QVERIFY(store.startPlaybackQueue("", session("invalid", 0)).isEmpty());
+            QVERIFY(store.startPlaybackQueue("Empty", {}).isEmpty()); QCOMPARE(store.queues(), before);
+            newest = store.startPlaybackQueue("Search: music", session("E", 2000));
+            QCOMPARE(store.queues().size(), 4); QCOMPARE(store.queues().first().toMap().value("id").toString(), second);
+            QVERIFY(!store.activate(first)); QVERIFY(store.activate(second)); QCOMPARE(store.session(), session("B", 5678));
+            QVERIFY(store.activate(newest)); QCOMPARE(store.session(), session("E", 2000));
+        }
+        QueueStore restored(file); QCOMPARE(restored.queues().size(), 4); QCOMPARE(restored.activeId(), newest);
+        QCOMPARE(restored.queues().first().toMap().value("id").toString(), second);
+        QVERIFY(restored.activate(second)); QCOMPARE(restored.session().value("position").toInt(), 5678);
+        QVERIFY(restored.session().value("shuffle").toBool()); QCOMPARE(restored.session().value("repeat").toInt(), 2);
+    }
+
+    void libraryPlaybackCreatesNamedQueuesAndSavesPlaylists()
+    {
+        const auto first = m_temp.filePath("automatic-queue-ui/A/01 First.wav");
+        const auto second = m_temp.filePath("automatic-queue-ui/A/02 Second.wav");
+        const auto third = m_temp.filePath("automatic-queue-ui/B/01 Third.wav");
+        QVERIFY(writeWave(first, 120, "Artist A", "Album A", 1));
+        QVERIFY(writeWave(second, 120, "Artist A", "Album A", 2));
+        QVERIFY(writeWave(third, 120, "Artist B", "Album B", 1));
+        const QStringList urls{QUrl::fromLocalFile(first).toString(), QUrl::fromLocalFile(second).toString(), QUrl::fromLocalFile(third).toString()};
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
+        settings.setValue("library/playCounts", QVariantMap{{urls[0], 3}, {urls[2], 2}}); settings.sync();
+        QString artistQueue;
+        {
+            QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+            qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+            auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); window->resize(1200, 800);
+            auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player");
+            QVERIFY(library && player); player->audioOutput()->setMuted(true);
+            library->addFiles({QUrl::fromLocalFile(first), QUrl::fromLocalFile(second), QUrl::fromLocalFile(third)});
+            QTRY_VERIFY(!library->scanning()); QTRY_VERIFY(window->property("sessionRestored").toBool());
+            QCOMPARE(window->property("pageTitle").toString(), QString("Overview"));
+            const auto track = library->trackForUrl(urls[0]);
+            auto open = [&](const QString &page, const QVariantMap &group) {
+                return QMetaObject::invokeMethod(window, "openCollection", Q_ARG(QVariant, page), Q_ARG(QVariant, group));
+            };
+            auto play = [&] { return QMetaObject::invokeMethod(window, "playAll", Q_ARG(QVariant, false)); };
+            auto activeName = [&] {
+                for (const auto &value : library->savedQueues()) if (value.toMap().value("active").toBool()) return value.toMap().value("name").toString();
+                return QString();
+            };
+            QVERIFY(open("Albums", {{"id", track.value("albumId")}, {"name", "Album A"}})); QVERIFY(play());
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); player->setPosition(5000);
+            const auto albumQueue = library->activeQueueId(); QCOMPARE(activeName(), QString("Album A")); QCOMPARE(library->savedQueues().size(), 1);
+            window->setProperty("shuffleEnabled", true); window->setProperty("repeatMode", 1);
+            QVERIFY(open("Artists", {{"id", track.value("artistId")}, {"name", "Artist A"}})); QVERIFY(play());
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); player->setPosition(3000);
+            artistQueue = library->activeQueueId(); QCOMPARE(activeName(), QString("Artist A")); QVERIFY(artistQueue != albumQueue);
+            const auto playlist = library->createPlaylistFromUrls("Mix", {urls[2], urls[0]}); QVERIFY(!playlist.isEmpty());
+            QVERIFY(open("Playlists", {{"id", playlist}, {"name", "Mix"}})); QVERIFY(play());
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); QCOMPARE(activeName(), QString("Mix"));
+            QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Most Played"))); QVERIFY(play());
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); QCOMPARE(activeName(), QString("Most Played"));
+            QCOMPARE(library->savedQueues().size(), 4); const auto mostPlayedQueue = library->activeQueueId();
+            QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, albumQueue)); QTRY_COMPARE(player->position(), 5000);
+            QVERIFY(window->property("shuffleEnabled").toBool()); QCOMPARE(window->property("repeatMode").toInt(), 1);
+            QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, mostPlayedQueue));
+            QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Songs")));
+            auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search); search->setProperty("text", "First");
+            QCOMPARE(library->songs()->count(), 1); QVERIFY(play());
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); QCOMPARE(activeName(), QString("Search: First"));
+            QCOMPARE(library->savedQueues().size(), 4); QCOMPARE(library->savedQueues().first().toMap().value("id").toString(), artistQueue);
+            for (const auto &value : library->savedQueues()) QVERIFY(value.toMap().value("id").toString() != albumQueue);
+            QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, artistQueue)); QTRY_COMPARE(player->position(), 3000);
+            const auto bankCount = library->savedQueues().size();
+            QMetaObject::invokeMethod(window, "nextTrack", Q_ARG(QVariant, false)); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+            QMetaObject::invokeMethod(window, "enqueueTrack", Q_ARG(QVariant, library->trackForUrl(urls[2])), Q_ARG(QVariant, false));
+            QMetaObject::invokeMethod(window, "enqueueTrack", Q_ARG(QVariant, library->trackForUrl(urls[1])), Q_ARG(QVariant, false));
+            const auto entries = qmlList(window, "queueItems"); QCOMPARE(entries.size(), 4);
+            QMetaObject::invokeMethod(window, "moveQueueItem", Q_ARG(QVariant, entries[2].toMap().value("id")), Q_ARG(QVariant, entries[0].toMap().value("id")));
+            QCOMPARE(library->savedQueues().size(), bankCount); QCOMPARE(library->activeQueueId(), artistQueue);
+            player->setPosition(7000); click(window, "queueButton"); QTest::qWait(30); click(window, "saveQueuePlaylistButton");
+            auto *dialog = window->findChild<QObject *>("queuePlaylistDialog"); QVERIFY(dialog && dialog->property("visible").toBool());
+            window->findChild<QObject *>("queuePlaylistNameField")->setProperty("text", "Saved queue");
+            click(window, "confirmSaveQueuePlaylist"); QTest::qWait(30); search->setProperty("text", "");
+            QString savedId;
+            for (const auto &value : library->playlists()->entries()) if (value.toMap().value("name").toString() == "Saved queue") savedId = value.toMap().value("id").toString();
+            QVERIFY(!savedId.isEmpty()); const auto saved = library->tracksForGroup("playlist", savedId); QCOMPARE(saved.size(), 3);
+            QCOMPARE(saved[0].toMap().value("fileUrl").toString(), urls[2]); QCOMPARE(saved[1].toMap().value("fileUrl").toString(), urls[0]);
+            QCOMPARE(saved[2].toMap().value("fileUrl").toString(), urls[1]); QCOMPARE(library->activeQueueId(), artistQueue);
+            QCOMPARE(player->position(), 7000); QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+            QSignalSpy errors(library, &TrackListModel::importError);
+            QVERIFY(library->createPlaylistFromUrls("Invalid", {urls[0], "file:///missing-song.wav"}).isEmpty());
+            QCOMPARE(errors.size(), 1); QCOMPARE(library->playlists()->count(), 2);
+            QMetaObject::invokeMethod(window, "persistSession"); QCOMPARE(warnings.size(), 0);
+        }
+        TrackListModel restored(settings.fileName(), false); QCOMPARE(restored.savedQueues().size(), 4); QCOMPARE(restored.activeQueueId(), artistQueue);
+        QCOMPARE(restored.playbackSession().value("position").toInt(), 7000);
+        QCOMPARE(restored.playbackSession().value("queue").toList().size(), 4); QCOMPARE(restored.playlists()->count(), 2);
+    }
+
+    void queueBanksPersistFourSessionsAndWriteWithoutBlocking()
+    {
+        const auto file = m_temp.filePath("four-queues.json");
+        const QVariantMap entry{{"id", "first"}, {"fileUrl", "file:///music/first.wav"}};
+        const QVariantMap first{{"queue", QVariantList{entry}}, {"source", QVariantList{entry}}, {"currentId", "first"}, {"position", 7654}, {"shuffle", true}, {"repeat", 2}};
+        QString firstId, secondId;
+        {
+            QueueStore store(file, first, true);
+            firstId = store.activeId(); QCOMPARE(store.session(), first);
+            secondId = store.createQueue("Evening"); QVERIFY(!secondId.isEmpty());
+            const QVariantMap second{{"currentId", "second"}, {"position", 1234}};
+            store.saveSession(second);
+            QVERIFY(store.activate(firstId)); QCOMPARE(store.session(), first);
+            QVERIFY(store.renameQueue(firstId, "Morning"));
+            QVERIFY(!store.createQueue("Travel").isEmpty());
+            QVERIFY(!store.createQueue("Focus").isEmpty()); QCOMPARE(store.queues().size(), 4);
+            QSignalSpy errors(&store, &QueueStore::error);
+            QVERIFY(store.createQueue("Fifth").isEmpty()); QCOMPARE(errors.size(), 1);
+            QVERIFY(store.activate(secondId)); QCOMPARE(store.session(), second);
+            store.saveHistory({{"playCounts", QVariantMap{{"file:///music/first.wav", 7}}}});
+        }
+        {
+            QueueStore restored(file); QCOMPARE(restored.queues().size(), 4); QCOMPARE(restored.activeId(), secondId);
+            QCOMPARE(restored.session().value("position").toInt(), 1234);
+            QCOMPARE(restored.history().value("playCounts").toMap().value("file:///music/first.wav").toInt(), 7);
+            QVERIFY(restored.activate(firstId)); QCOMPARE(restored.session(), first);
+            QVERIFY(restored.removeQueue(secondId)); QCOMPARE(restored.queues().size(), 3);
+            restored.removeOtherQueues(); QCOMPARE(restored.queues().size(), 1); QVERIFY(!restored.removeQueue(firstId));
+            QVariantList large;
+            for (int i = 0; i < 10000; ++i) large.append(QVariantMap{{"id", QString::number(i)}, {"fileUrl", QString("file:///music/%1 track.flac").arg(i)}});
+            QElapsedTimer elapsed; elapsed.start();
+            restored.saveSession({{"queue", large}, {"source", large}, {"currentId", "9000"}, {"position", 4000}});
+            QVERIFY2(elapsed.elapsed() < 100, "Scheduling playback persistence blocked the interface");
+        }
+        QueueStore finalStore(file); QCOMPARE(finalStore.session().value("queue").toList().size(), 10000);
+    }
+
+    void displayThemeAndSeekPreferencesPersistAndArtworkIsOptional()
+    {
+        const auto config = m_temp.filePath("theme-preferences.ini");
+        const auto cover = m_temp.filePath("theme-cover.png");
+        QImage image(300, 300, QImage::Format_RGB32); image.fill(QColor("#d03f58")); QVERIFY(image.save(cover));
+        {
+            DisplaySettings settings(config);
+            QCOMPARE(settings.theme(), QString("dark")); QCOMPARE(settings.seekSeconds(), 10);
+            const auto teal = settings.accentColor();
+            settings.setArtwork(QUrl::fromLocalFile(cover)); QTest::qWait(40); QCOMPARE(settings.accentColor(), teal);
+            settings.setArtworkColors(true); QTRY_VERIFY(settings.accentColor() != teal);
+            const auto dark = settings.accentColor();
+            settings.setTheme("light"); QVERIFY(settings.accentColor() != dark);
+            settings.setArtwork(QUrl()); QCOMPARE(settings.accentColor(), QColor("#006c67"));
+            settings.setArtworkColors(false); settings.setSeekSeconds(2); QCOMPARE(settings.seekSeconds(), 5);
+            settings.setSeekSeconds(80); QCOMPARE(settings.seekSeconds(), 30); settings.setSeekSeconds(7);
+            QVERIFY(!settings.splitArtists()); QCOMPARE(settings.artistSeparators(), QString(",;|"));
+            settings.setSplitArtists(true); settings.setArtistSeparators("|;|unexpected");
+            QCOMPARE(settings.artistSeparators(), QString(";|"));
+        }
+        DisplaySettings restored(config);
+        QCOMPARE(restored.theme(), QString("light")); QCOMPARE(restored.seekSeconds(), 7); QVERIFY(!restored.artworkColors());
+        QVERIFY(restored.splitArtists()); QCOMPARE(restored.artistSeparators(), QString(";|"));
+    }
+
+    void artistCreditsAreOptionalAndSharedAcrossArtistPages()
+    {
+        const auto first = m_temp.filePath("artist-credits/Shared.wav");
+        const auto second = m_temp.filePath("artist-credits/Solo.wav");
+        const auto third = m_temp.filePath("artist-credits/Band.wav");
+        const auto fourth = m_temp.filePath("artist-credits/Ampersand.wav");
+        QVERIFY(writeWave(first)); QVERIFY(writeWave(second)); QVERIFY(writeWave(third)); QVERIFY(writeWave(fourth));
+        const auto original = fileBytes(first);
+        const auto sharedCredit = QStringLiteral("Artist A, Artist B; Artist C | artist a");
+        QVariantList snapshot{
+            releaseTrack("Collective", sharedCredit, 2, first, {}, "Collective"),
+            releaseTrack("Collective", "Artist B", 1, second, {}, "Collective"),
+            releaseTrack("Collective", "AC, DC", 3, third, {}, "Collective"),
+            releaseTrack("Collective", "Artist A & Artist D", 4, fourth, {}, "Collective")};
+        QSettings settings(m_temp.filePath("artist-credits.ini"), QSettings::IniFormat);
+        settings.setValue("library/folders", QStringList{}); settings.setValue("library/snapshot", snapshot); settings.sync();
+        TrackListModel library(settings.fileName(), false);
+        QCOMPARE(library.artists()->count(), 4);
+        QCOMPARE(library.trackForUrl(QUrl::fromLocalFile(first).toString()).value("artistCredits").toList().size(), 1);
+        const auto albumId = library.albums()->get(0).value("id"); QCOMPARE(library.albums()->count(), 1);
+        QSignalSpy scans(&library, &TrackListModel::scanningChanged);
+        library.setArtistSeparation(true, ",;|");
+        QCOMPARE(library.artists()->count(), 6);
+        const auto shared = library.trackForUrl(QUrl::fromLocalFile(first).toString());
+        QCOMPARE(shared.value("artist").toString(), sharedCredit);
+        const auto credits = shared.value("artistCredits").toList(); QCOMPARE(credits.size(), 3);
+        QCOMPARE(credits[0].toMap().value("name").toString(), QString("Artist A"));
+        const auto artistB = credits[1].toMap().value("id").toString();
+        const auto songs = library.tracksForGroup("artist", artistB); QCOMPARE(songs.size(), 2);
+        QCOMPARE(songs[0].toMap().value("trackNumber").toInt(), 1); QCOMPARE(songs[1].toMap().value("trackNumber").toInt(), 2);
+        library.songs()->setCollectionKind("artist"); library.songs()->setCollectionId(artistB);
+        QCOMPARE(library.songs()->count(), 2);
+        QCOMPARE(library.albums()->count(), 1); QCOMPARE(library.albums()->get(0).value("id"), albumId);
+        library.setArtistSeparation(true, ";|");
+        const auto band = library.trackForUrl(QUrl::fromLocalFile(third).toString()).value("artistCredits").toList();
+        QCOMPARE(band.size(), 1); QCOMPARE(band[0].toMap().value("name").toString(), QString("AC, DC"));
+        library.setArtistSeparation(false, ",;|");
+        QCOMPARE(library.artists()->count(), 4); QCOMPARE(library.tracksForGroup("artist", artistB).size(), 1);
+        QCOMPARE(fileBytes(first), original); QCOMPARE(scans.size(), 0);
+    }
+
+    void artistLinksNavigateToTheArtistActuallyClicked()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        const auto path = m_temp.filePath("artist-links/Shared.wav");
+        QVERIFY(writeWave(path, 30, "Artist A, Artist B; Artist C | Artist D", "Shared album"));
+        const auto original = fileBytes(path);
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first()); window->resize(1200, 800); window->requestActivate();
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+        QVERIFY(display); display->reset(); display->setSplitArtists(false); display->setArtistSeparators(",;|");
+        const auto restore = qScopeGuard([display] { display->setSplitArtists(false); display->setArtistSeparators(",;|"); display->reset(); });
+        auto *library = window->findChild<TrackListModel *>("library");
+        auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player); player->audioOutput()->setMuted(true);
+        library->addFiles({QUrl::fromLocalFile(path)}); QTRY_VERIFY(!library->scanning()); QCOMPARE(library->artists()->count(), 1);
+        QVERIFY(QMetaObject::invokeMethod(window, "openDisplaySettings"));
+        auto *splitBox = findItem(window->contentItem(), "splitArtistsCheckBox"); QVERIFY(splitBox);
+        splitBox->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        QTRY_VERIFY(display->splitArtists()); QCOMPARE(library->artists()->count(), 4);
+        QMetaObject::invokeMethod(window->findChild<QObject *>("displaySettingsDialog"), "close");
+        click(window, "navSongs"); QTest::qWait(50); click(window, "playAllButton");
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        const auto url = window->property("currentUrl").toString();
+        const auto credits = library->trackForUrl(url).value("artistCredits").toList(); QCOMPARE(credits.size(), 4);
+        const auto artistB = credits[1].toMap().value("id").toString();
+        auto clickSecondArtist = [window](QQuickItem *links) {
+            if (!links) return false;
+            for (int x = 0; x < int(links->width()); ++x) {
+                QString href;
+                if (!QMetaObject::invokeMethod(links, "linkAt", Q_RETURN_ARG(QString, href), Q_ARG(qreal, qreal(x)), Q_ARG(qreal, links->height() / 2))) return false;
+                if (href != "artist:1") continue;
+                QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, links->mapToScene(QPointF(x + 1, links->height() / 2)).toPoint());
+                return true;
+            }
+            return false;
+        };
+        click(window, "nowPlayingCoverButton"); QTest::qWait(50);
+        QVERIFY(clickSecondArtist(findItem(window->contentItem(), "nowPlayingArtistLink")));
+        QTRY_COMPARE(window->property("collectionId").toString(), artistB);
+        QCOMPARE(window->property("collectionName").toString(), QString("Artist B")); QCOMPARE(library->songs()->count(), 1);
+        click(window, "navSongs"); QTest::qWait(50);
+        QVERIFY(clickSecondArtist(findItem(window->contentItem(), "songArtistLabel0")));
+        QTRY_COMPARE(window->property("collectionId").toString(), artistB);
+        click(window, "navSongs"); QTest::qWait(50);
+        QVERIFY(clickSecondArtist(findItem(window->contentItem(), "footerArtistLink")));
+        QTRY_COMPARE(window->property("collectionId").toString(), artistB);
+        QVERIFY(QMetaObject::invokeMethod(window, "openArtist", Q_ARG(QVariant, library->trackForUrl(url))));
+        auto *picker = window->findChild<QObject *>("artistPicker"); QVERIFY(picker); QTRY_VERIFY(picker->property("visible").toBool());
+        QTest::qWait(50); click(window, "chooseArtist2");
+        QTRY_COMPARE(window->property("collectionId").toString(), credits[2].toMap().value("id").toString());
+        QCOMPARE(window->property("currentUrl").toString(), url); QCOMPARE(fileBytes(path), original);
+        // The About button is the final setting, and its dialog contains the requested credit.
+        QVERIFY(QMetaObject::invokeMethod(window, "openDisplaySettings"));
+        auto *aboutButton = findItem(window->contentItem(), "aboutMusicaButton"); QVERIFY(aboutButton);
+        aboutButton->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        auto *about = window->findChild<QObject *>("aboutMusicaDialog"); QVERIFY(about); QTRY_VERIFY(about->property("visible").toBool());
+        auto *creator = findItem(window->contentItem(), "musicaCreatorCredit"); QVERIFY(creator);
+        QVERIFY(creator->property("text").toString().contains("weo sikho fuzile"));
+        QMetaObject::invokeMethod(about, "close");
+        QMetaObject::invokeMethod(window->findChild<QObject *>("displaySettingsDialog"), "close");
+        QCOMPARE(warnings.size(), 0);
+    }
+
+    void modelBatchesRefreshDelegatesOnce()
+    {
+        LibraryEntryModel source; LibraryViewModel view;
+        view.setSourceModel(&source); view.setSortKey("Title");
+        QVariantList entries;
+        for (int i = 0; i < 1500; ++i) entries.append(QVariantMap{{"fileUrl", QString::number(i)}, {"title", QString::number(i)}, {"duration", 0}, {"playCount", 0}});
+        source.synchronize(entries, "fileUrl");
+        QSignalSpy updates(&view, &LibraryViewModel::entriesChanged), resets(&view, &QAbstractItemModel::modelReset);
+        for (auto &entry : entries) { auto fields = entry.toMap(); fields["duration"] = 200000; fields["artwork"] = "file:///cover.png"; entry = fields; }
+        source.synchronize(entries, "fileUrl");
+        QCOMPARE(updates.size(), 1); QCOMPARE(resets.size(), 0);
+        source.setPlayCount("10", 1); QVERIFY(updates.size() > 1);
+    }
+
+    void sharingCopiesAudioAndCapturesNowPlayingWithoutChangingTheFile()
+    {
+        const auto path = m_temp.filePath("share/Artist - Song.wav"); QVERIFY(writeWave(path, 30, "Artist", "Album"));
+        const auto original = fileBytes(path);
+        Sharing sharing; QSignalSpy ready(&sharing, &Sharing::ready), copied(&sharing, &Sharing::copied), exported(&sharing, &Sharing::exported), errors(&sharing, &Sharing::error);
+        sharing.prepareSong({{"fileUrl", QUrl::fromLocalFile(path)}, {"artist", "Artist"}, {"title", "Song"}});
+        QCOMPARE(ready.size(), 1); QVERIFY(sharing.copyToClipboard()); QCOMPARE(copied.size(), 1);
+        QCOMPARE(QGuiApplication::clipboard()->mimeData()->urls(), QList<QUrl>{QUrl::fromLocalFile(path)});
+        const auto copy = m_temp.filePath("shared-copy.wav");
+        QVERIFY(sharing.exportTo(QUrl::fromLocalFile(copy))); QTRY_COMPARE(exported.size(), 1);
+        QCOMPARE(fileBytes(copy), original); QCOMPARE(fileBytes(path), original);
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library"); library->addFiles({QUrl::fromLocalFile(path)}); QTRY_VERIFY(!library->scanning());
+        QMetaObject::invokeMethod(window, "playUrl", Q_ARG(QVariant, QUrl::fromLocalFile(path).toString()));
+        auto *player = window->findChild<PlaybackEngine *>("player"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        click(window, "nowPlayingCoverButton"); QTest::qWait(60);
+        auto *pane = findItem(window->contentItem(), "nowPlayingPane"); QVERIFY(pane && pane->isVisible());
+        sharing.captureNowPlaying(pane); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 5000);
+        const auto details = ready.last().first().toMap(); QVERIFY(details.value("image").toBool());
+        const auto screenshot = details.value("fileUrl").toUrl().toLocalFile();
+        const QImage capture(screenshot); QVERIFY(!capture.isNull()); QVERIFY(capture.width() <= 2400);
+        QVERIFY(sharing.copyToClipboard()); QVERIFY(QGuiApplication::clipboard()->mimeData()->hasImage());
+        const auto png = m_temp.filePath("shared-now-playing.png");
+        QVERIFY(sharing.exportTo(QUrl::fromLocalFile(png))); QTRY_COMPARE(exported.size(), 2);
+        QVERIFY(!QImage(png).isNull()); QCOMPARE(fileBytes(path), original); QCOMPARE(errors.size(), 0); QCOMPARE(warnings.size(), 0);
+        QGuiApplication::clipboard()->clear();
+    }
+
+    void fourQueuesAndSeekControlsWorkInTheInterface()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        const auto first = m_temp.filePath("queue-bank-ui/First.wav"), second = m_temp.filePath("queue-bank-ui/Second.wav");
+        QVERIFY(writeWave(first, 120)); QVERIFY(writeWave(second, 120));
+        QString firstId, secondId;
+        {
+            QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+            qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+            auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+            auto *library = window->findChild<TrackListModel *>("library"); library->addFiles({QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)}); QTRY_VERIFY(!library->scanning());
+            auto *player = window->findChild<PlaybackEngine *>("player"); player->audioOutput()->setMuted(true);
+            auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+            display->reset(); display->setTheme("dark"); display->setArtworkColors(false); display->setSeekSeconds(7);
+            const auto defaults = qScopeGuard([display] { display->setTheme("dark"); display->setSeekSeconds(10); });
+            window->requestActivate(); QTest::qWait(30);
+            QMetaObject::invokeMethod(window, "playUrl", Q_ARG(QVariant, QUrl::fromLocalFile(first).toString()));
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); player->setPosition(10000);
+            QTest::keyClick(window, Qt::Key_Right); QTRY_COMPARE(player->position(), 17000);
+            QTest::keyClick(window, Qt::Key_Left); QTRY_COMPARE(player->position(), 10000);
+            firstId = library->activeQueueId();
+            window->setProperty("shuffleEnabled", true); window->setProperty("repeatMode", 2);
+            QMetaObject::invokeMethod(window, "createSavedQueue", Q_ARG(QVariant, QString("Evening")));
+            secondId = library->activeQueueId(); QVERIFY(secondId != firstId); QCOMPARE(qmlList(window, "queueItems").size(), 0);
+            QMetaObject::invokeMethod(window, "playUrl", Q_ARG(QVariant, QUrl::fromLocalFile(second).toString()));
+            QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); player->setPosition(3000);
+            QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, firstId)); QTRY_COMPARE(player->position(), 10000);
+            QCOMPARE(window->property("currentUrl").toString(), QUrl::fromLocalFile(first).toString()); QVERIFY(window->property("shuffleEnabled").toBool()); QCOMPARE(window->property("repeatMode").toInt(), 2);
+            QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, secondId)); QTRY_COMPARE(player->position(), 3000);
+            display->setTheme("light"); QTest::qWait(70);
+            window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-teal-light.png");
+            click(window, "queueButton"); QTest::qWait(60); click(window, "manageQueuesButton"); QTest::qWait(60);
+            auto *manager = window->findChild<QObject *>("queueManagerDialog"); QVERIFY(manager && manager->property("visible").toBool());
+            click(window, "newSavedQueueButton"); QTest::qWait(40);
+            window->findChild<QObject *>("queueNameField")->setProperty("text", "Third");
+            QMetaObject::invokeMethod(window->findChild<QObject *>("queueNameDialog"), "accept"); QCOMPARE(library->savedQueues().size(), 3);
+            QMetaObject::invokeMethod(window, "createSavedQueue", Q_ARG(QVariant, QString("Fourth"))); QCOMPARE(library->savedQueues().size(), 4);
+            QVERIFY(!findItem(window->contentItem(), "newSavedQueueButton")->isEnabled());
+            QMetaObject::invokeMethod(manager, "close"); QMetaObject::invokeMethod(window, "activateSavedQueue", Q_ARG(QVariant, secondId));
+            QTRY_COMPARE(player->position(), 3000); QMetaObject::invokeMethod(window, "persistSession"); QCOMPARE(warnings.size(), 0);
+        }
+        TrackListModel restored(settings.fileName(), false); QCOMPARE(restored.savedQueues().size(), 4); QCOMPARE(restored.activeQueueId(), secondId);
+        QCOMPARE(restored.playbackSession().value("position").toInt(), 3000);
+    }
+
+    void backNavigationRestoresCollectionsSearchAndScroll()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
+        QVariantList snapshot;
+        for (int album = 0; album < 60; ++album) for (int song = 0; song < 10; ++song) {
+            const auto albumName = QString("Release %1").arg(album, 2, 10, QLatin1Char('0'));
+            const auto path = m_temp.filePath(QString("navigation/%1/%2 Song.wav").arg(albumName).arg(song + 1, 2, 10, QLatin1Char('0')));
+            auto track = releaseTrack(albumName, "Artist " + QString::number(album % 3), song + 1, path);
+            track["artwork"] = ""; track["format"] = "WAV"; track["duration"] = 30000;
+            track["genre"] = "Jazz"; track["probed"] = true; track["metadataVersion"] = TrackListModel::MetadataCacheVersion;
+            snapshot.append(track);
+        }
+        settings.setValue("library/snapshot", snapshot);
+        QStringList playlistUrls; for (int i = 0; i < 10; ++i) playlistUrls.append(snapshot[i].toMap().value("fileUrl").toString());
+        settings.setValue("library/playlists", QVariantList{QVariantMap{{"id", "navigation-playlist"}, {"name", "My playlist"}, {"urls", playlistUrls}}});
+        settings.sync();
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+        display->reset(); const auto restoreDisplay = qScopeGuard([display] { display->reset(); });
+        window->resize(900, 640); QTest::qWait(60); window->requestActivate();
+        auto *back = findItem(window->contentItem(), "backButton"); QVERIFY(back && back->isVisible()); QVERIFY(!back->isEnabled());
+        // The persistent button remains available when the old page heading is hidden.
+        for (const auto &page : {"Albums", "Artists", "Playlists"}) {
+            click(window, "nav" + QString(page)); QTest::qWait(50);
+            QVERIFY(back->isVisible() && back->isEnabled());
+            click(window, "groupCard0"); QTest::qWait(50); QVERIFY(!window->property("collectionName").toString().isEmpty());
+            click(window, "backButton"); QTRY_VERIFY(window->property("collectionName").toString().isEmpty());
+            QCOMPARE(window->property("activePage").toString(), QString(page));
+        }
+        while (window->property("canGoBack").toBool()) {
+            QTest::keyClick(window, Qt::Key_Left, Qt::AltModifier); QTest::qWait(30);
+        }
+        QCOMPARE(window->property("activePage").toString(), QStringLiteral("Overview")); QVERIFY(!back->isEnabled());
+
+        click(window, "navAlbums");
+        auto *search = window->findChild<QObject *>("searchField"); search->setProperty("text", "Release"); QTest::qWait(70);
+        auto *grid = findItem(window->contentItem(), "groupGrid"); QVERIFY(grid);
+        QMetaObject::invokeMethod(grid, "positionViewAtEnd"); QTRY_VERIFY(grid->property("atYEnd").toBool());
+        const auto offset = grid->property("contentY").toReal() - grid->property("originY").toReal();
+        QVERIFY(offset > grid->height());
+        click(window, "groupCard59"); QTest::qWait(50);
+        QCOMPARE(window->property("collectionName").toString(), QStringLiteral("Release 59"));
+        click(window, "backButton"); QTRY_VERIFY(window->property("collectionName").toString().isEmpty());
+        QCOMPARE(window->property("searchQuery").toString(), QStringLiteral("Release"));
+        QTRY_VERIFY(std::abs(grid->property("contentY").toReal() - grid->property("originY").toReal() - offset) < 1);
+        QVERIFY(grid->property("atYEnd").toBool());
+        click(window, "groupCard59"); QTest::qWait(50);
+        const auto albumId = window->property("collectionId").toString();
+        search->setProperty("text", "Song"); window->setProperty("sortBy", "Artist"); QTest::qWait(50);
+        auto *songs = findItem(window->contentItem(), "songList"); QVERIFY(songs);
+        QMetaObject::invokeMethod(songs, "positionViewAtEnd"); QTest::qWait(40);
+        const auto songOffset = songs->property("contentY").toReal() - songs->property("originY").toReal();
+        const auto track = library->songs()->get(0);
+        QVERIFY(QMetaObject::invokeMethod(window, "openArtist", Q_ARG(QVariant, track))); QTest::qWait(40);
+        QCOMPARE(window->property("collectionKind").toString(), QStringLiteral("artist"));
+        QTest::keyClick(window, Qt::Key_Left, Qt::AltModifier);
+        QTRY_COMPARE(window->property("collectionId").toString(), albumId);
+        QCOMPARE(window->property("searchQuery").toString(), QStringLiteral("Song"));
+        QCOMPARE(window->property("sortBy").toString(), QStringLiteral("Artist"));
+        QCOMPARE(library->songs()->count(), 10);
+        // Allow fractional item/layout rounding while retaining the same songs.
+        QTRY_VERIFY_WITH_TIMEOUT(std::abs(songs->property("contentY").toReal() - songs->property("originY").toReal() -
+            std::min(songOffset, songs->property("contentHeight").toReal() - songs->height())) <= 3, 1000);
+
+        const auto historySize = qmlList(window, "navigationHistory").size();
+        click(window, "navSongs"); QTest::qWait(40);
+        click(window, "navSongs"); QCOMPARE(qmlList(window, "navigationHistory").size(), historySize + 1);
+        // Backspace edits text normally while a search field has focus.
+        auto *searchItem = qobject_cast<QQuickItem *>(search); QVERIFY(searchItem);
+        search->setProperty("text", "Songs"); searchItem->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_End); QTest::keyClick(window, Qt::Key_Backspace);
+        QCOMPARE(window->property("searchQuery").toString(), QStringLiteral("Song"));
+        QCOMPARE(window->property("activePage").toString(), QStringLiteral("Songs"));
+        QCOMPARE(warnings.size(), 0);
+    }
+
+    void popupButtonsToggleAndFullscreenNowPlayingRestoresTheWindow()
+    {
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        const auto song = m_temp.filePath("navigation-playing/Artist - Song.wav"); QVERIFY(writeWave(song, 120, "Artist", "Album", 1));
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library");
+        auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+        display->reset(); const auto restoreDisplay = qScopeGuard([display] { display->reset(); });
+        window->resize(900, 640); window->requestActivate();
+        player->audioOutput()->setMuted(true);
+        library->addFiles({QUrl::fromLocalFile(song)}); QTRY_VERIFY(!library->scanning());
+        click(window, "navSongs"); QTest::qWait(50); click(window, "playAllButton");
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); player->setPosition(5000);
+        for (const auto &pair : {qMakePair("queueButton", "queuePopup"), qMakePair("crossfadeSettingsButton", "playbackOptions"), qMakePair("sleepTimerButton", "sleepTimerPopup")}) {
+            auto *popup = window->findChild<QObject *>(pair.second); QVERIFY(popup);
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                click(window, pair.first); QTRY_VERIFY(popup->property("visible").toBool());
+                click(window, pair.first); QTRY_VERIFY(!popup->property("visible").toBool());
+                QTest::qWait(50); QVERIFY(!popup->property("visible").toBool());
+            }
+        }
+        click(window, "nowPlayingCoverButton"); QTRY_VERIFY(window->property("nowPlayingOpen").toBool());
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            click(window, "nowPlayingQueueButton"); QTRY_VERIFY(window->property("queueOpen").toBool());
+            click(window, "nowPlayingQueueButton"); QTRY_VERIFY(!window->property("queueOpen").toBool());
+        }
+        // An artist link is one navigation step; Back returns to Now Playing.
+        const auto historySize = qmlList(window, "navigationHistory").size();
+        QVERIFY(clickLink(window, "nowPlayingArtistLink")); QTRY_COMPARE(window->property("collectionKind").toString(), QStringLiteral("artist"));
+        QCOMPARE(qmlList(window, "navigationHistory").size(), historySize + 1);
+        click(window, "backButton"); QTRY_VERIFY(window->property("nowPlayingOpen").toBool());
+        click(window, "closeNowPlayingButton"); QTRY_VERIFY(!window->property("nowPlayingOpen").toBool());
+        QCOMPARE(window->property("activePage").toString(), QStringLiteral("Songs"));
+
+        QPointer<QQuickItem> pane;
+        auto *bar = findItem(window->contentItem(), "playerBar");
+        auto *sidebar = findItem(window->contentItem(), "sidebar"); QVERIFY(bar && sidebar);
+        const auto queue = qmlList(window, "queueItems");
+        const auto id = window->property("currentQueueId");
+        const auto position = player->position();
+        window->requestActivate(); QTest::qWait(30); QTest::keyClick(window, Qt::Key_F11);
+        QTRY_VERIFY(window->property("fullscreenNowPlaying").toBool()); QTRY_COMPARE(window->visibility(), QWindow::FullScreen);
+        pane = findItem(window->contentItem(), "nowPlayingPane"); QVERIFY(pane);
+        QVERIFY(window->property("nowPlayingOpen").toBool()); QVERIFY(!bar->isVisible() && !sidebar->isVisible());
+        QTRY_COMPARE(pane->width(), qreal(window->width())); QTRY_COMPARE(pane->height(), qreal(window->height()));
+        QCOMPARE(pane->mapToScene(QPointF()), QPointF());
+        QCOMPARE(qmlList(window, "queueItems"), queue); QCOMPARE(window->property("currentQueueId"), id);
+        QCOMPARE(player->position(), position); QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        click(window, "nowPlayingQueueButton"); QTRY_VERIFY(window->property("queueOpen").toBool());
+        auto *popup = window->findChild<QObject *>("queuePopup"); QVERIFY(popup);
+        QVERIFY(popup->property("y").toReal() >= 0 && popup->property("y").toReal() + popup->property("height").toReal() <= window->height());
+        QTest::keyClick(window, Qt::Key_Escape); QTRY_VERIFY(!window->property("queueOpen").toBool());
+        QVERIFY(window->property("fullscreenNowPlaying").toBool());
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-fullscreen-now-playing.png");
+        click(window, "nowPlayingPlayPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        click(window, "nowPlayingPlayPauseButton"); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+        QTest::keyClick(window, Qt::Key_F11);
+        QTRY_COMPARE(window->visibility(), QWindow::Windowed); QVERIFY(!window->property("fullscreenNowPlaying").toBool());
+        QVERIFY(window->property("nowPlayingOpen").toBool() && bar->isVisible() && sidebar->isVisible());
+        click(window, "nowPlayingFullscreenButton"); QTRY_COMPARE(window->visibility(), QWindow::FullScreen);
+        QTest::keyClick(window, Qt::Key_Escape); QTRY_COMPARE(window->visibility(), QWindow::Windowed);
+        QVERIFY(window->property("nowPlayingOpen").toBool());
+        QTest::keyClick(window, Qt::Key_Escape); QTRY_VERIFY(!window->property("nowPlayingOpen").toBool());
+
+        window->showMaximized(); QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+        QTest::keyClick(window, Qt::Key_F11); QTRY_COMPARE(window->visibility(), QWindow::FullScreen);
+        QTest::qWait(60); // Let the fullscreen header finish its layout before the pointer click.
+        QVERIFY(window->property("fullscreenNowPlaying").toBool());
+        QCOMPARE(window->property("fullscreenReturnVisibility").toInt(), int(QWindow::Maximized));
+        pane = findItem(window->contentItem(), "nowPlayingPane"); QVERIFY(pane);
+        QSignalSpy closed(pane, SIGNAL(closeRequested()));
+        click(window, "closeNowPlayingButton"); QTest::qWait(40);
+        QCOMPARE(closed.size(), 1);
+        QVERIFY(!window->property("fullscreenNowPlaying").toBool());
+        QVERIFY(!window->property("nowPlayingOpen").toBool());
+        QTRY_COMPARE_WITH_TIMEOUT(window->visibility(), QWindow::Maximized, 1000);
+        QVERIFY(!window->property("nowPlayingOpen").toBool() && bar->isVisible());
+        window->showNormal(); player->stop(); QCOMPARE(warnings.size(), 0);
+    }
+
+    void queueBrowsingSurvivesRemovalAndCanJumpToCurrentSong_data()
+    {
+        QTest::addColumn<double>("textScale");
+        QTest::addColumn<QSize>("windowSize");
+        QTest::newRow("normal") << 1.0 << QSize(1280, 850);
+        QTest::newRow("compact-large-text") << 2.0 << QSize(720, 480);
+    }
+
+    void queueBrowsingSurvivesRemovalAndCanJumpToCurrentSong()
+    {
+        QFETCH(double, textScale); QFETCH(QSize, windowSize);
+        QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
+        const auto first = m_temp.filePath("queue-browsing/First.wav");
+        const auto second = m_temp.filePath("queue-browsing/Second.wav");
+        QVERIFY(writeWave(first, 120)); QVERIFY(writeWave(second, 120));
+        QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
+        qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(qml.rootObjects().first());
+        auto *library = window->findChild<TrackListModel *>("library");
+        auto *player = window->findChild<PlaybackEngine *>("player");
+        auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
+        QVERIFY(library && player && display);
+        display->setDensity("compact"); display->setTextScale(textScale);
+        const auto resetDisplay = qScopeGuard([display] { display->reset(); });
+        window->resize(windowSize);
+        player->audioOutput()->setMuted(true);
+        library->addFiles({QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)}); QTRY_VERIFY(!library->scanning());
+        QVariantList entries;
+        // The same files appear repeatedly: scrolling must target the playing
+        // queue entry, not the first matching URL.
+        for (int i = 0; i < 120; ++i)
+            entries.append(QVariantMap{{"id", QString::number(i + 1)},
+                {"fileUrl", QUrl::fromLocalFile(i % 2 ? second : first).toString()}});
+        window->setProperty("queueSerial", 120);
+        window->setProperty("queueSource", entries); window->setProperty("queueItems", entries);
+        auto *model = window->findChild<QAbstractItemModel *>("queueEntries"); QVERIFY(model);
+        QCOMPARE(model->rowCount(), 120);
+        QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+        const auto playEntry = [window](const QString &id) {
+            return QMetaObject::invokeMethod(window, "playQueueItem", Q_ARG(QVariant, id));
+        };
+        QVERIFY(playEntry("81")); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        click(window, "queueButton"); QTRY_VERIFY(window->property("queueOpen").toBool());
+        auto *list = findItem(window->contentItem(), "queueList"); QVERIFY(list);
+        auto *popup = window->findChild<QObject *>("queuePopup"); QVERIFY(popup);
+        auto *content = list->property("contentItem").value<QQuickItem *>(); QVERIFY(content);
+        const auto rowForId = [content](const QString &id) -> QQuickItem * {
+            for (auto *item : content->childItems())
+                if (item->objectName().startsWith("queueRow") && item->property("entryId").toString() == id) return item;
+            return nullptr;
+        };
+        const auto visibleId = [&](const QString &id) {
+            auto *row = rowForId(id); if (!row) return false;
+            const auto bounds = row->mapRectToItem(list, row->boundingRect());
+            return bounds.top() >= -1 && bounds.bottom() <= list->height() + 1;
+        };
+        const auto firstVisibleRow = [&]() -> QQuickItem * {
+            QQuickItem *firstVisible = nullptr;
+            qreal firstY = list->height();
+            for (auto *row : content->childItems()) {
+                if (!row->objectName().startsWith("queueRow")) continue;
+                const auto bounds = row->mapRectToItem(list, row->boundingRect());
+                if (bounds.bottom() > 0 && bounds.top() < firstY) { firstVisible = row; firstY = bounds.top(); }
+            }
+            return firstVisible;
+        };
+        const auto rowY = [list](QQuickItem *row) { return row->mapToItem(list, QPointF()).y(); };
+        const auto positionAt = [list](int index, int mode) {
+            return QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, mode));
+        };
+        // Opening starts at the currently playing duplicate, far down the queue.
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-queue-layout-" + QString::fromLatin1(QTest::currentDataTag()) + ".png");
+        QTRY_VERIFY2(visibleId("81"), qPrintable(QString("Queue viewport %1 high, current row %2 high, popup %3 high").arg(list->height()).arg(rowForId("81") ? rowForId("81")->height() : -1).arg(popup->property("height").toReal())));
+        auto *jump = findItem(window->contentItem(), "queueCurrentSongButton"); QVERIFY(jump && jump->isEnabled());
+        const auto jumpBounds = jump->mapRectToItem(window->contentItem(), jump->boundingRect());
+        QVERIFY(jumpBounds.left() >= 0 && jumpBounds.right() <= window->width());
+        QVERIFY(jumpBounds.top() >= 0 && jumpBounds.bottom() <= window->height());
+
+        QMetaObject::invokeMethod(list, "positionViewAtBeginning"); QTest::qWait(60);
+        QVERIFY(visibleId("1"));
+        const auto startY = rowY(rowForId("1"));
+        // Give the remove button keyboard focus too: deleting its delegate
+        // must not make ListView follow a different current/focused row.
+        auto *remove = findItem(window->contentItem(), "removeQueue1"); QVERIFY(remove); remove->forceActiveFocus();
+        click(window, "removeQueue1"); QTest::qWait(60);
+        QCOMPARE(model->rowCount(), 119); QCOMPARE(window->property("currentQueueId").toString(), QStringLiteral("81"));
+        QVERIFY(rowForId("1")); QVERIFY(std::abs(rowY(rowForId("1")) - startY) < 1);
+        QVERIFY(list->property("atYBeginning").toBool()); QVERIFY(!visibleId("81"));
+
+        QMetaObject::invokeMethod(list, "positionViewAtEnd"); QTest::qWait(60);
+        // Consecutive removals at the bottom may clamp by one row, never jump
+        // away to the playing song or back to the start.
+        for (int removed = 0; removed < 4; ++removed) {
+            auto *anchor = firstVisibleRow(); QVERIFY(anchor);
+            const auto anchorId = anchor->property("entryId").toString();
+            const auto before = rowY(anchor), rowHeight = anchor->height();
+            const int last = model->rowCount() - 1;
+            click(window, "removeQueue" + QString::number(last)); QTest::qWait(50);
+            QCOMPARE(window->property("currentQueueId").toString(), QStringLiteral("81"));
+            QVERIFY(rowForId(anchorId)); QVERIFY(std::abs(rowY(rowForId(anchorId)) - before) <= rowHeight + 1);
+            QVERIFY(list->property("atYEnd").toBool());
+        }
+        // Removing an entry above the viewport keeps the same visible songs
+        // anchored, even though all subsequent indexes change.
+        auto *anchor = firstVisibleRow(); QVERIFY(anchor);
+        auto anchorId = anchor->property("entryId").toString();
+        auto beforeY = rowY(anchor);
+        QVERIFY(QMetaObject::invokeMethod(window, "removeQueueItem", Q_ARG(QVariant, QString("1")))); QTest::qWait(60);
+        QVERIFY(rowForId(anchorId)); QVERIFY(std::abs(rowY(rowForId(anchorId)) - beforeY) < 1);
+
+        QVERIFY(positionAt(45, 0)); QTest::qWait(60); // ListView.Beginning
+        anchor = firstVisibleRow(); QVERIFY(anchor);
+        anchorId = anchor->property("entryId").toString(); beforeY = rowY(anchor);
+        QVERIFY(playEntry("101")); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        QTest::qWait(60);
+        QVERIFY(rowForId(anchorId)); QVERIFY(std::abs(rowY(rowForId(anchorId)) - beforeY) < 1);
+        QVERIFY(!visibleId("101")); // Advancing playback does not steal browsing.
+        QVERIFY(QMetaObject::invokeMethod(window, "removeQueueItem", Q_ARG(QVariant, QString("101"))));
+        QTRY_COMPARE(window->property("currentQueueId").toString(), QStringLiteral("102"));
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause(); QTest::qWait(40);
+        QVERIFY(rowForId(anchorId)); QVERIFY(std::abs(rowY(rowForId(anchorId)) - beforeY) < 1);
+        QVERIFY(!visibleId("102"));
+        const auto queueBeforeJump = qmlList(window, "queueItems");
+        const auto positionBeforeJump = player->position();
+        click(window, "queueCurrentSongButton"); QTRY_VERIFY(visibleId("102"));
+        QCOMPARE(qmlList(window, "queueItems"), queueBeforeJump);
+        QCOMPARE(player->position(), positionBeforeJump); QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+
+        // Closing and reopening must re-center again; both footer and Now
+        // Playing queue buttons use the same behavior.
+        QMetaObject::invokeMethod(list, "positionViewAtBeginning"); QTest::qWait(40);
+        window->setProperty("queueOpen", false); QTest::qWait(40);
+        QVERIFY(playEntry("61")); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+        click(window, "nowPlayingCoverButton"); QTRY_VERIFY(window->property("nowPlayingOpen").toBool());
+        click(window, "nowPlayingQueueButton"); QTRY_VERIFY(visibleId("61"));
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-queue-" + QString::fromLatin1(QTest::currentDataTag()) + ".png");
+        for (const auto &entry : {queueBeforeJump.first(), queueBeforeJump.last()}) {
+            const auto id = entry.toMap().value("id").toString();
+            QVERIFY(playEntry(id)); QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState); player->pause();
+            click(window, "queueCurrentSongButton"); QTRY_VERIFY(visibleId(id));
+        }
+        QCOMPARE(resets.size(), 0); QCOMPARE(warnings.size(), 0);
+        QVERIFY(QMetaObject::invokeMethod(window, "stopAndClearTrack"));
+        window->setProperty("queueSource", QVariantList{}); window->setProperty("queueItems", QVariantList{}); QTest::qWait(30);
+        QCOMPARE(model->rowCount(), 0); QVERIFY(!jump->isEnabled());
+        window->setProperty("queueOpen", false); QTest::qWait(30);
+        window->setProperty("queueOpen", true); QTest::qWait(40);
+        QVERIFY(popup->property("visible").toBool()); QCOMPARE(warnings.size(), 0);
+    }
+
     void shuffledQueueDragAndResumePreserveEntryIdentity()
     {
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
@@ -1654,10 +3373,13 @@ private slots:
             QCOMPARE(warnings.size(), 0);
         }
         settings.sync();
-        auto session = settings.value("player/session").toMap();
-        auto queue = session.value("queue").toList();
-        queue.append(QVariantMap{{"id", "999"}, {"fileUrl", QUrl::fromLocalFile(m_temp.filePath("missing.wav")).toString()}});
-        session["queue"] = queue; settings.setValue("player/session", session); settings.sync();
+        {
+            TrackListModel saved(settings.fileName(), false);
+            auto session = saved.playbackSession();
+            auto queue = session.value("queue").toList();
+            queue.append(QVariantMap{{"id", "999"}, {"fileUrl", QUrl::fromLocalFile(m_temp.filePath("missing.wav")).toString()}});
+            session["queue"] = queue; saved.savePlaybackSession(session);
+        }
         QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -1690,6 +3412,7 @@ private slots:
         QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         engine.load(QUrl("qrc:/main.qml")); QVERIFY(!engine.rootObjects().isEmpty());
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); auto *library = window->findChild<TrackListModel *>("library");
+        library->rescan(); // New test fixtures are discovered by a manual scan.
         QTRY_VERIFY(library->libraryReady() && !library->scanning());
         click(window, "navSmart playlists"); QTest::qWait(60); click(window, "smartPlaylist1");
         QCOMPARE(library->songs()->count(), 2); QCOMPARE(window->property("collectionId").toString(), QStringLiteral("never"));
@@ -1725,6 +3448,7 @@ private slots:
 
     void linuxDesktopControlsUseMpris()
     {
+#if MUSICA_HAS_DBUS
         const auto daemon = QStandardPaths::findExecutable("dbus-daemon");
         QVERIFY2(!daemon.isEmpty(), "dbus-daemon is required for the isolated MPRIS integration check");
         QProcess bus; bus.setProgram(daemon); bus.setArguments({"--session", "--nofork", "--print-address=1"}); bus.start();
@@ -1769,6 +3493,9 @@ private slots:
         QCOMPARE(warnings.size(), 0);
         bus.terminate(); QVERIFY(bus.waitForFinished());
         QDBusConnection::disconnectFromBus("musica-test-client"); QDBusConnection::disconnectFromBus("musica-test-service");
+#else
+        QSKIP("MPRIS is a Linux desktop integration; native playback and window lifecycle are tested separately.");
+#endif
     }
 
     void interfaceSearchPlaybackAndQueue()

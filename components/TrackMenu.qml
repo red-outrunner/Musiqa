@@ -1,18 +1,20 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 
 Menu {
     id: root
+    font: Theme.controlFont
     property var track: null
     property string queueId: ""
     property bool inPlaylist: false
     signal actionRequested(string action)
-    width: 225
-    palette.window: "#26342b"
-    palette.windowText: "#e5eee6"
-    palette.text: "#e5eee6"
-    palette.highlight: "#3d5846"
-    palette.highlightedText: "#ffffff"
+    width: Theme.dp(225)
+    palette.window: Theme.raised
+    palette.windowText: Theme.text
+    palette.text: Theme.text
+    palette.highlight: Theme.accent
+    palette.highlightedText: Theme.onAccent
     MenuItem {
         objectName: "menuPlayNow"
         text: "Play now"
@@ -59,6 +61,10 @@ Menu {
         text: "Edit metadata & cover…"
         onTriggered: root.actionRequested("editMetadata")
     }
+    MenuItem { objectName: "menuTrackBookmarks"; text: "Track bookmarks…"; onTriggered: root.actionRequested("bookmarks") }
+    MenuItem { objectName: "menuTrackLyrics"; text: "Offline lyrics…"; onTriggered: root.actionRequested("lyrics") }
+    MenuItem { objectName: "menuShareSong"; text: "Share song…"; onTriggered: root.actionRequested("share") }
+    MenuItem { objectName: "menuShareNowPlaying"; text: "Share Now Playing screenshot…"; visible: !!root.track; height: visible ? implicitHeight : 0; onTriggered: root.actionRequested("screenshot") }
     MenuItem {
         objectName: "menuSongInfo"
         text: "Song info"

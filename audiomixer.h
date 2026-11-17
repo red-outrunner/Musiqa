@@ -6,6 +6,7 @@
 #include <QVariantMap>
 #include <QUrl>
 #include <QProcess>
+#include <QFutureWatcher>
 #include <memory>
 
 // Only the current and upcoming songs are decoded. PCM lives in temporary
@@ -18,6 +19,8 @@ public:
     ~PcmTrack() override;
     void decode();
     void setInfo(const QVariantMap &info);
+    void loadReplayGain();
+    QVariantMap replayGainInfo;
     bool append(const char *data, qint64 bytes);
     QByteArray readFrames(qint64 position, int count);
     qint64 frames() const { return m_frames; }
@@ -36,6 +39,8 @@ private:
     QByteArray m_decodeError;
     qint64 m_frames = 0;
     qint64 m_estimatedFrames = 0;
+    bool m_replayGainRequested = false;
+    QFutureWatcher<QVariantMap> m_replayGainReader;
 };
 
 struct MixerEvent
@@ -62,6 +67,7 @@ public:
         std::shared_ptr<PcmTrack> track;
         QString entryId, token;
         qint64 frame = 0;
+        double gain = 1;
     };
     explicit AudioMixer(int sampleRate = 48000, int channels = 2);
     void setCurrent(const std::shared_ptr<PcmTrack> &track, const QString &entryId, qint64 frame = 0, const QString &token = {});
@@ -75,6 +81,7 @@ public:
     bool gapless = true;
     double crossfadeSeconds = 0;
     bool stopAfterCurrent = false;
+    QString replayGainMode = QStringLiteral("off");
     bool ended() const { return m_ended; }
     static QPair<qint64, qint64> transitionPlan(const PcmTrack &from, const PcmTrack &to, double seconds);
 private:

@@ -4,11 +4,13 @@
 #include <QAudioOutput>
 #include <QElapsedTimer>
 #include <QMediaPlayer>
+#include <QMediaDevices>
 #include <QSettings>
 #include <QThread>
 #include <functional>
 
 class PlaybackWorker;
+class LyricsDocument;
 
 class PlaybackEngine : public QObject
 {
@@ -27,6 +29,16 @@ class PlaybackEngine : public QObject
     Q_PROPERTY(bool crossfading READ crossfading NOTIFY transitionChanged)
     Q_PROPERTY(qint64 sleepRemainingMs READ sleepRemainingMs NOTIFY sleepChanged)
     Q_PROPERTY(bool sleepAfterTrack READ sleepAfterTrack NOTIFY sleepChanged)
+    Q_PROPERTY(bool equalizerEnabled READ equalizerEnabled WRITE setEqualizerEnabled NOTIFY equalizerChanged)
+    Q_PROPERTY(QString equalizerPreset READ equalizerPreset WRITE setEqualizerPreset NOTIFY equalizerChanged)
+    Q_PROPERTY(int equalizerBandCount READ equalizerBandCount WRITE setEqualizerBandCount NOTIFY equalizerChanged)
+    Q_PROPERTY(QVariantList equalizerBands READ equalizerBands NOTIFY equalizerChanged)
+    Q_PROPERTY(QString outputMode READ outputMode WRITE setOutputMode NOTIFY audioOutputChanged)
+    Q_PROPERTY(QVariantList outputDevices READ outputDevices NOTIFY audioOutputChanged)
+    Q_PROPERTY(QString outputDeviceId READ outputDeviceId WRITE setOutputDeviceId NOTIFY audioOutputChanged)
+    Q_PROPERTY(QString outputDeviceName READ outputDeviceName NOTIFY audioOutputChanged)
+    Q_PROPERTY(QString replayGainMode READ replayGainMode WRITE setReplayGainMode NOTIFY replayGainChanged)
+    Q_PROPERTY(QObject *lyrics READ lyrics CONSTANT)
 public:
     explicit PlaybackEngine(QObject *parent = nullptr);
     ~PlaybackEngine() override;
@@ -48,6 +60,24 @@ public:
     void setCrossfadeSeconds(double value);
     qint64 sleepRemainingMs() const;
     bool sleepAfterTrack() const { return m_snapshot.sleepAfterTrack; }
+    bool equalizerEnabled() const { return m_snapshot.equalizerEnabled; }
+    QString equalizerPreset() const { return m_snapshot.equalizerPreset; }
+    void setEqualizerEnabled(bool enabled);
+    void setEqualizerPreset(const QString &preset);
+    int equalizerBandCount() const { return m_snapshot.equalizerBandCount; }
+    QVariantList equalizerBands() const;
+    void setEqualizerBandCount(int count);
+    Q_INVOKABLE void setEqualizerBandGain(int index, double gain);
+    Q_INVOKABLE void resetEqualizer();
+    QString outputMode() const { return m_snapshot.outputMode; }
+    void setOutputMode(const QString &mode);
+    QVariantList outputDevices() const;
+    QString outputDeviceId() const { return m_outputDeviceId; }
+    void setOutputDeviceId(const QString &id);
+    QString outputDeviceName() const { return m_outputDeviceName; }
+    QString replayGainMode() const { return m_snapshot.replayGainMode; }
+    void setReplayGainMode(const QString &mode);
+    QObject *lyrics() const;
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
     Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
@@ -60,6 +90,8 @@ public:
     Q_INVOKABLE void sleepAtEndOfTrack();
     Q_INVOKABLE void cancelSleep();
     Q_INVOKABLE void checkpoint();
+    Q_INVOKABLE QVariantMap exportOptions() const;
+    Q_INVOKABLE bool importOptions(const QVariantMap &options);
     AudioOutputStatistics outputStatistics() const;
 signals:
     void sourceChanged();
@@ -72,6 +104,9 @@ signals:
     void optionsChanged();
     void transitionChanged();
     void sleepChanged();
+    void equalizerChanged();
+    void audioOutputChanged();
+    void replayGainChanged();
     void sleepTriggered();
     void errorOccurred(QMediaPlayer::Error error, const QString &errorString);
     void trackAdvanced(const QString &entryId, const QUrl &url);
@@ -82,10 +117,15 @@ private:
     void dispatch(const std::function<void()> &command);
     void applySnapshot(const PlaybackSnapshot &snapshot);
     void updateVolume();
+    void updateOutputDevice();
+    void saveEqualizerOptions();
     QAudioOutput m_controls;
     QSettings m_settings;
+    QMediaDevices m_mediaDevices;
+    QString m_outputDeviceId, m_outputDeviceName;
     QThread m_audioThread;
     PlaybackWorker *m_worker = nullptr;
+    LyricsDocument *m_lyrics = nullptr;
     PlaybackSnapshot m_snapshot;
     QElapsedTimer m_snapshotAge;
     bool m_checkpointing = false;

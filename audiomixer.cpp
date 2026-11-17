@@ -1,7 +1,10 @@
 #include "audiomixer.h"
+#include "replaygain.h"
+#include <QtConcurrentRun>
 
 #include <QAudioBuffer>
 #include <QDir>
+#include <QCoreApplication>
 #include <QUuid>
 #include <QStandardPaths>
 #include <algorithm>
@@ -9,9 +12,10 @@
 #include <cstring>
 
 PcmTrack::PcmTrack(const QUrl &source, const QAudioFormat &pcmFormat)
-    : url(source), format(pcmFormat), m_pcm(QDir::tempPath() + QStringLiteral("/musica-audio-XXXXXX.pcm"))
+    : url(source), format(pcmFormat), m_pcm(QDir::tempPath() + QStringLiteral("/musica-pcm-%1-XXXXXX").arg(QCoreApplication::applicationPid()))
 {
     if (!m_pcm.open()) error = tr("Couldn't create a temporary audio buffer: %1").arg(m_pcm.errorString());
+    connect(&m_replayGainReader, &QFutureWatcher<QVariantMap>::finished, this, [this] { replayGainInfo = m_replayGainReader.result(); emit ready(); });
 }
 
 PcmTrack::~PcmTrack()
@@ -23,6 +27,14 @@ PcmTrack::~PcmTrack()
 void PcmTrack::setInfo(const QVariantMap &info)
 {
     if (info.value("duration").toLongLong() > 0) m_estimatedFrames = info.value("duration").toLongLong() * format.sampleRate() / 1000;
+    if (info.contains("replayGain")) replayGainInfo = info.value("replayGain").toMap();
+}
+void PcmTrack::loadReplayGain()
+{
+    if (m_replayGainRequested || !url.isLocalFile()) return;
+    m_replayGainRequested = true;
+    const auto file = url.toLocalFile();
+    m_replayGainReader.setFuture(QtConcurrent::run([file] { return ReplayGain::read(file); }));
 }
 
 bool PcmTrack::append(const char *data, qint64 bytes)
@@ -95,7 +107,8 @@ AudioMixer::AudioMixer(int rate, int channels) : m_rate(rate), m_channels(channe
 
 AudioMixer::Voice AudioMixer::newVoice(const std::shared_ptr<PcmTrack> &track, const QString &id, qint64 frame)
 {
-    return {track, id, m_tokenPrefix + QLatin1Char(':') + id + QLatin1Char(':') + QString::number(++m_serial), frame};
+    return {track, id, m_tokenPrefix + QLatin1Char(':') + id + QLatin1Char(':') + QString::number(++m_serial), frame,
+        track ? ReplayGain::scale(track->replayGainInfo, replayGainMode) : 1};
 }
 
 void AudioMixer::clear() { m_current = {}; m_next = {}; m_outgoing = {}; m_startPending = false; m_ended = false; }
@@ -165,6 +178,14 @@ MixerBlock AudioMixer::render(int requested)
         const auto current = m_current.track->readFrames(m_current.frame, count);
         if (current.size() != count * m_channels * int(sizeof(float))) { block.waiting = true; break; }
         const auto *a = reinterpret_cast<const float *>(current.constData());
+        const double gainTarget = ReplayGain::scale(m_current.track->replayGainInfo, replayGainMode);
+        const double outTarget = m_outgoing.track ? ReplayGain::scale(m_outgoing.track->replayGainInfo, replayGainMode) : 1;
+        const double smoothing = 1 - std::exp(-1.0 / (m_rate * 0.02));
+        const auto ramp = [smoothing](Voice &voice, double target) {
+            voice.gain += (target - voice.gain) * smoothing;
+            if (std::abs(voice.gain - target) < 1e-7) voice.gain = target;
+            return float(voice.gain);
+        };
         if (m_outgoing.track) {
             const auto outgoing = m_outgoing.track->readFrames(m_outgoing.frame, count);
             if (outgoing.size() != current.size()) { block.waiting = true; break; }
@@ -172,8 +193,9 @@ MixerBlock AudioMixer::render(int requested)
             for (int frame = 0; frame < count; ++frame) {
                 const double phase = double(m_fadeFrame + frame) / qMax<qint64>(1, m_fadeLength) * 1.5707963267948966;
                 const float in = float(std::sin(phase)), out = float(std::cos(phase));
+                const auto inGain = ramp(m_current, gainTarget), outGain = ramp(m_outgoing, outTarget);
                 for (int channel = 0; channel < m_channels; ++channel) {
-                    const float value = a[frame * m_channels + channel] * in + b[frame * m_channels + channel] * out;
+                    const float value = a[frame * m_channels + channel] * in * inGain + b[frame * m_channels + channel] * out * outGain;
                     const float limited = std::abs(value) > 0.95f ? std::copysign(0.95f + 0.05f * std::tanh((std::abs(value) - 0.95f) / 0.05f), value) : value;
                     output[(rendered + frame) * m_channels + channel] = limited;
                 }
@@ -181,7 +203,14 @@ MixerBlock AudioMixer::render(int requested)
             m_outgoing.frame += count; m_fadeFrame += count;
             block.events.append(event(MixerEvent::Progress, m_outgoing, rendered + count));
             if (m_outgoing.frame >= m_outgoing.track->frames()) { block.events.append(event(MixerEvent::Finished, m_outgoing, rendered + count)); m_outgoing = {}; }
-        } else std::memcpy(output + rendered * m_channels, a, size_t(current.size()));
+        } else if (gainTarget == 1 && m_current.gain == 1) std::memcpy(output + rendered * m_channels, a, size_t(current.size()));
+        else for (int frame = 0; frame < count; ++frame) {
+            const auto gain = ramp(m_current, gainTarget);
+            for (int channel = 0; channel < m_channels; ++channel) {
+                const auto value = a[frame * m_channels + channel] * gain;
+                output[(rendered + frame) * m_channels + channel] = std::isfinite(value) ? qBound(-1.0f, value, 1.0f) : 0;
+            }
+        }
         rendered += count; m_current.frame += count;
         block.events.append(event(MixerEvent::Progress, m_current, rendered));
     }

@@ -1,4 +1,6 @@
 import QtQuick
+import QtQml.Models
+import MusicPlayer 1.0
 import QtQuick.Controls
 
 Item {
@@ -7,16 +9,27 @@ Item {
     property string dragGroup: ""
     property string title: "Move song"
     required property Flickable view
+    property Item delegateItem: null
     readonly property bool dragging: gripMouse.drag.active
+    onDraggingChanged: {
+        if (!delegateItem) return;
+        if (dragging) delegateItem.DelegateModel.inPersistedItems = true;
+        else {
+            // Keep just the dragged delegate alive beyond the cache. Release
+            // it after the drop handler has used its entry id and position.
+            const item = delegateItem;
+            Qt.callLater(function() { if (item) item.DelegateModel.inPersistedItems = false; });
+        }
+    }
     signal step(int direction)
-    width: 24
-    height: 30
+    width: Theme.dp(24)
+    height: Theme.dp(30)
     activeFocusOnTab: true
     Accessible.role: Accessible.Button
     Accessible.name: "Reorder " + title + ". Drag, or use the up and down arrows."
     Keys.onUpPressed: step(-1)
     Keys.onDownPressed: step(1)
-    Icon { anchors.centerIn: parent; width: 16; height: 16; name: "grip"; color: root.activeFocus || gripMouse.containsMouse ? "#a7e8cb" : "#607b69" }
+    Icon { anchors.centerIn: parent; width: Theme.dp(16); height: Theme.dp(16); name: "grip"; color: root.activeFocus || gripMouse.containsMouse ? Theme.accent : Theme.muted }
     MouseArea {
         id: gripMouse
         anchors.fill: parent
@@ -39,20 +52,20 @@ Item {
     Rectangle {
         id: ghost
         parent: root.Overlay.overlay
-        width: 240
-        height: 36
+        width: Theme.dp(240)
+        height: Theme.dp(36)
         z: 1000
         visible: gripMouse.drag.active
-        radius: 6
-        color: "#344e3b"
-        border.color: "#a7e8cb"
+        radius: Theme.dp(6)
+        color: Theme.selected
+        border.color: Theme.accent
         opacity: 0.95
         Drag.active: gripMouse.drag.active
         Drag.source: root
         Drag.keys: [root.dragGroup]
-        Drag.hotSpot.x: 10
-        Drag.hotSpot.y: 15
-        Text { anchors.fill: parent; anchors.margins: 9; text: root.title; color: "#e5eee6"; font.pixelSize: 11; elide: Text.ElideRight }
+        Drag.hotSpot.x: Theme.dp(10)
+        Drag.hotSpot.y: Theme.dp(15)
+        Text { anchors.fill: parent; anchors.margins: Theme.gap(9); text: root.title; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); elide: Text.ElideRight }
     }
     Timer {
         interval: 25
@@ -61,7 +74,9 @@ Item {
         onTriggered: {
             const point = ghost.mapToItem(root.view, 10, 15);
             const movement = point.y < 36 ? -12 : point.y > root.view.height - 36 ? 12 : 0;
-            root.view.contentY = Math.max(0, Math.min(Math.max(0, root.view.contentHeight - root.view.height), root.view.contentY + movement));
+            const minimum = root.view.originY;
+            const maximum = Math.max(minimum, minimum + root.view.contentHeight - root.view.height);
+            root.view.contentY = Math.max(minimum, Math.min(maximum, root.view.contentY + movement));
         }
     }
     ToolTip.visible: gripMouse.containsMouse && !gripMouse.drag.active

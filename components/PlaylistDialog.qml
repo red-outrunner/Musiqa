@@ -1,40 +1,45 @@
 import QtQuick
+import MusicPlayer 1.0
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Dialog {
     id: root
+    font: Theme.controlFont
     required property var library
     property var track: null
+    property var tracks: []
+    readonly property var urls: tracks.length ? tracks.map(item => item.fileUrl) : track ? [track.fileUrl] : []
+    onClosed: tracks = []
     signal saved(string name)
-    title: track ? "Add to playlist" : "Create a playlist"
-    width: 420
+    title: urls.length ? "Add to playlist" : "Create a playlist"
+    width: Math.min(Theme.dp(420), parent.width - Theme.gap(24))
     modal: true
     anchors.centerIn: parent
-    padding: 22
+    padding: Theme.gap(22)
     standardButtons: Dialog.Cancel
-    palette.windowText: "#e5eee6"
-    palette.text: "#e5eee6"
-    palette.button: "#344b3a"
-    palette.buttonText: "#e5eee6"
+    palette.windowText: Theme.text
+    palette.text: Theme.text
+    palette.button: Theme.raised
+    palette.buttonText: Theme.text
     background: Rectangle {
-        color: "#202e24"
-        radius: 12
-        border.color: "#405b47"
+        color: Theme.surface
+        radius: Theme.dp(12)
+        border.color: Theme.border
     }
     onOpened: playlistName.clear()
     contentItem: ColumnLayout {
-        spacing: 14
+        spacing: Theme.gap(14)
         Text {
-            text: root.track ? root.track.title : "Give your collection a name."
-            color: "#91aa99"
-            font.pixelSize: 12
+            text: root.urls.length > 1 ? root.urls.length + " selected songs" : root.track ? root.track.title : "Playlist name"
+            color: Theme.muted
+            font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
             elide: Text.ElideRight
             Layout.fillWidth: true
         }
         ListView {
             id: playlistList
-            visible: !!root.track && root.library.playlists.count > 0
+            visible: root.urls.length > 0 && root.library.playlists.count > 0
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(180, contentHeight)
             clip: true
@@ -45,20 +50,21 @@ Dialog {
                 required property int index
                 objectName: "choosePlaylist" + index
                 width: ListView.view.width
-                height: 45
+                height: Theme.dp(45)
                 contentItem: Text {
                     text: entry.modelData.name + "  ·  " + entry.modelData.trackCount + " songs"
-                    color: "#e1ebe1"
-                    font.pixelSize: 12
+                    color: Theme.text
+                    font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
                 }
                 background: Rectangle {
-                    radius: 6
-                    color: entry.hovered ? "#344c3a" : "transparent"
+                    radius: Theme.dp(6)
+                    color: entry.hovered ? Theme.raised : "transparent"
                 }
                 onClicked: {
-                    if (root.track && root.library.addToPlaylist(modelData.id, root.track.fileUrl)) {
+                    if (root.urls.length) {
+                        root.library.addTracksToPlaylist(modelData.id, root.urls);
                         root.saved(modelData.name);
                         root.close();
                     }
@@ -67,10 +73,10 @@ Dialog {
             ScrollBar.vertical: ScrollBar {}
         }
         Text {
-            visible: !!root.track && root.library.playlists.count === 0
+            visible: root.urls.length > 0 && root.library.playlists.count === 0
             text: "Create your first playlist below."
-            color: "#91aa99"
-            font.pixelSize: 12
+            color: Theme.muted
+            font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
         }
         TextField {
             id: playlistName
@@ -78,28 +84,29 @@ Dialog {
             Layout.fillWidth: true
             maximumLength: 80
             placeholderText: "New playlist name"
-            color: "#e5eee6"
-            placeholderTextColor: "#829588"
+            color: Theme.text
+            placeholderTextColor: Theme.muted
             selectByMouse: true
             background: Rectangle {
-                color: "#152219"
-                radius: 6
-                border.color: playlistName.activeFocus ? "#a7e8cb" : "#425e49"
+                color: Theme.input
+                radius: Theme.dp(6)
+                border.color: playlistName.activeFocus ? Theme.accent : Theme.border
             }
             onAccepted: createButton.clicked()
         }
         ActionButton {
             id: createButton
             objectName: "createPlaylistButton"
-            text: root.track ? "Create & add song" : "Create playlist"
+            text: root.urls.length ? "Create & add" : "Create playlist"
             symbol: "plus"
             Layout.alignment: Qt.AlignRight
             enabled: playlistName.text.trim().length > 0
             onClicked: {
                 if (!playlistName.text.trim())
                     return;
-                const id = root.library.createPlaylist(playlistName.text, root.track ? root.track.fileUrl : "");
+                const id = root.library.createPlaylist(playlistName.text);
                 if (id) {
+                    if (root.urls.length) root.library.addTracksToPlaylist(id, root.urls);
                     root.saved(playlistName.text.trim());
                     root.close();
                 }

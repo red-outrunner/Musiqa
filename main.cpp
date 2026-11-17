@@ -1,4 +1,5 @@
 #include <QCommandLineParser>
+#include <QDebug>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
@@ -6,9 +7,14 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
+#include <memory>
 
 #include "tracklibrary.h"
+#include "artworkcache.h"
+#include "displaysettings.h"
+#include "sharing.h"
 #include "mprisservice.h"
+#include "applicationrequests.h"
 
 int main(int argc, char *argv[])
 {
@@ -17,24 +23,40 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("Musica"));
     QCoreApplication::setApplicationVersion(QStringLiteral(MUSICA_VERSION));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Musica"));
-    QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/musica.svg")));
+    QGuiApplication::setDesktopFileName(QStringLiteral("musica"));
+    QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/musica.png")));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Your music. Your space. A local music player."));
+    parser.setApplicationDescription(QStringLiteral("A local music player."));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Audio files or music folders to import."), QStringLiteral("[files…]"));
+    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Audio files or music folders to open and play."), QStringLiteral("[files…]"));
     QCommandLineOption screenshot(QStringLiteral("screenshot"), QStringLiteral("Save a window preview and exit."), QStringLiteral("path"));
     QCommandLineOption smokeTest(QStringLiteral("smoke-test"), QStringLiteral("Load the interface, check QML warnings, and exit."));
     parser.addOption(screenshot);
     parser.addOption(smokeTest);
     parser.process(app);
 
+    const bool preview = parser.isSet(screenshot) || parser.isSet(smokeTest);
+    const auto files = ApplicationRequests::urlsFromArguments(parser.positionalArguments());
+    // Preview/test invocations must remain independent of a running player.
+    std::unique_ptr<ApplicationRequests> requests;
+    if (!preview) {
+        requests = std::make_unique<ApplicationRequests>(&app);
+        const auto result = requests->startOrForward(files);
+        if (result == ApplicationRequests::Forwarded) return 0;
+        if (result == ApplicationRequests::Failed) { qCritical().noquote() << requests->errorString(); return 1; }
+    }
+
     qmlRegisterType<TrackListModel>("MusicPlayer", 1, 0, "TrackListModel");
     qmlRegisterType<PlaybackEngine>("MusicPlayer", 1, 0, "PlaybackEngine");
+    qmlRegisterType<DisplaySettings>("MusicPlayer", 1, 0, "DisplaySettings");
+    qmlRegisterType<Sharing>("MusicPlayer", 1, 0, "Sharing");
+    qmlRegisterSingletonType(QUrl("qrc:/components/Theme.qml"), "MusicPlayer", 1, 0, "Theme");
     qmlRegisterUncreatableType<LibraryViewModel>("MusicPlayer", 1, 0, "LibraryViewModel", QStringLiteral("Provided by the music library"));
 
+    registerPerformanceTypes();
     QQmlApplicationEngine engine;
     bool qmlWarnings = false;
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
@@ -51,13 +73,20 @@ int main(int argc, char *argv[])
     QObject::connect(&app, &QCoreApplication::aboutToQuit, window, [window] {
         QMetaObject::invokeMethod(window, "persistSession");
     });
-    QList<QUrl> files;
-    for (const QString &path : parser.positionalArguments())
-        files.append(QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()));
-    if (!files.isEmpty())
-        library->addFiles(files);
+    const auto openFiles = [window](const QList<QUrl> &urls) {
+        QVariantList arguments;
+        for (const auto &url : urls) arguments.append(url.toString(QUrl::FullyEncoded));
+        QMetaObject::invokeMethod(window, "openExternalFiles", Qt::QueuedConnection, Q_ARG(QVariant, arguments), Q_ARG(QVariant, false));
+    };
+    if (requests) {
+        QObject::connect(requests.get(), &ApplicationRequests::urlsRequested, window, openFiles);
+        QObject::connect(requests.get(), &ApplicationRequests::activateRequested, window, [window] {
+            QMetaObject::invokeMethod(window, "restoreMainPlayer", Qt::QueuedConnection);
+        });
+        requests->setReady();
+    } else if (!files.isEmpty()) openFiles(files);
 
-    if (parser.isSet(screenshot) || parser.isSet(smokeTest)) {
+    if (preview) {
         QTimer::singleShot(1800, &app, [&] {
             bool saved = true;
             if (parser.isSet(screenshot))

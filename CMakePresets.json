@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    { "name": "release", "displayName": "Musica · Release", "generator": "Unix Makefiles", "binaryDir": "${sourceDir}/build", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "BUILD_TESTING": "ON" } },
+    { "name": "debug", "displayName": "Musica · Debug", "inherits": "release", "binaryDir": "${sourceDir}/build-debug", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+    { "name": "windows-release", "displayName": "Musica · Windows Release (MSVC + vcpkg)", "generator": "Ninja", "binaryDir": "${sourceDir}/build-windows", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }, "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "BUILD_TESTING": "ON", "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake", "VCPKG_TARGET_TRIPLET": "x64-windows" } },
+    { "name": "windows-debug", "displayName": "Musica · Windows Debug (MSVC + vcpkg)", "inherits": "windows-release", "binaryDir": "${sourceDir}/build-windows-debug", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } }
+  ],
+  "buildPresets": [{ "name": "release", "configurePreset": "release" }, { "name": "debug", "configurePreset": "debug" }, { "name": "windows-release", "configurePreset": "windows-release" }, { "name": "windows-debug", "configurePreset": "windows-debug" }],
+  "testPresets": [{ "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } }, { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } }, { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } }, { "name": "windows-debug", "configurePreset": "windows-debug", "output": { "outputOnFailure": true } }]
+}
