@@ -216,8 +216,6 @@ void LibraryEntryModel::queryDatabase(const LibraryQuery &filter, bool reset)
 
 LibraryViewModel::LibraryViewModel(QObject *parent) : QSortFilterProxyModel(parent)
 {
-    m_collator.setCaseSensitivity(Qt::CaseInsensitive);
-    m_collator.setNumericMode(true);
     setDynamicSortFilter(true);
     setSortRole(LibraryEntryModel::NameRole);
     setFilterRole(LibraryEntryModel::FilterRole);

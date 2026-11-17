@@ -22,9 +22,7 @@ QVariantList TrackListModel::albumOptions() const
 {
     QVariantList rows;
     rows = m_database->valid() ? m_database->all("album") : m_albums.entries();
-    QCollator collator;
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
-    collator.setNumericMode(true);
+    auto collator = libraryCollator();
     std::sort(rows.begin(), rows.end(), [&collator](const auto &a, const auto &b) { return collator.compare(a.toMap().value("name").toString(), b.toMap().value("name").toString()) < 0; });
     return rows;
 }

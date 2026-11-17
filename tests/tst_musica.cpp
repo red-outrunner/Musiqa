@@ -383,13 +383,20 @@ private slots:
     void collectionSortingIsNumericAndDirectional_data()
     {
         QTest::addColumn<bool>("database");
-        QTest::newRow("in-memory") << false;
-        QTest::newRow("sqlite") << true;
+        QTest::addColumn<bool>("cLocale");
+        QTest::newRow("in-memory") << false << false;
+        QTest::newRow("sqlite") << true << false;
+        QTest::newRow("in-memory-C-locale") << false << true;
+        QTest::newRow("sqlite-C-locale") << true << true;
     }
 
     void collectionSortingIsNumericAndDirectional()
     {
         QFETCH(bool, database);
+        QFETCH(bool, cLocale);
+        const QLocale previousLocale;
+        const auto restoreLocale = qScopeGuard([previousLocale] { QLocale::setDefault(previousLocale); });
+        if (cLocale) QLocale::setDefault(QLocale::c());
         QVariantList rows{
             QVariantMap{{"id", "a"}, {"name", "Album 2"}, {"subtitle", "Zulu"}, {"addedAt", 100LL}, {"trackCount", 12}, {"duration", 2000000LL}},
             QVariantMap{{"id", "b"}, {"name", "Album 10"}, {"subtitle", "Alpha"}, {"addedAt", 300LL}, {"trackCount", 2}, {"duration", 12000000LL}},
@@ -398,7 +405,7 @@ private slots:
         LibraryEntryModel source;
         CountingLibraryViewModel view;
         QAbstractItemModelTester modelTester(&view, QAbstractItemModelTester::FailureReportingMode::QtTest);
-        LibraryDatabase store(m_temp.filePath("collection-sorts.sqlite")); QVERIFY(store.valid());
+        LibraryDatabase store(m_temp.filePath(cLocale ? "collection-sorts-C.sqlite" : "collection-sorts.sqlite")); QVERIFY(store.valid());
         if (database) { QVERIFY(store.replace({}, rows, {}, {})); view.setDatabase(&store, "album"); }
         else { source.synchronize(rows, "id"); view.setSourceModel(&source); }
         const auto check = [&](const QString &key, const QStringList &ascending, const QStringList &descending) {

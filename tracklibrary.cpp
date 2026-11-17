@@ -810,9 +810,7 @@ void TrackListModel::publishUpdates()
             m_database->setValue("artistSeparation", QVariantMap{{"enabled", m_splitArtists}, {"separators", m_artistSeparators}});
         } else emit importError(tr("Couldn't save the library database: %1").arg(m_database->error()));
     } else m_playlistEntries.synchronize(playlistRows, QStringLiteral("id"));
-    QCollator collator;
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
-    collator.setNumericMode(true);
+    auto collator = libraryCollator();
     std::sort(albumRows.begin(), albumRows.end(), [&collator](const auto &a, const auto &b) {
         return collator.compare(a.toMap().value(QStringLiteral("name")).toString(), b.toMap().value(QStringLiteral("name")).toString()) < 0;
     });

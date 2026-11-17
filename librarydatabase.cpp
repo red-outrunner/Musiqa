@@ -2,7 +2,7 @@
 #include "genregrouping.h"
 #include "collectionfeatures.h"
 #include "searchfilters.h"
-#include <QCollator>
+#include "librarycollation.h"
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -203,7 +203,7 @@ bool LibraryDatabase::writeRows(const QString &kind, const QVariantList &rows, c
     // Store locale-aware numeric ranks, so SQLite can order without decoding
     // tag JSON or asking the proxy to materialize the whole library.
     QList<QVector<int>> ranks;
-    QCollator collator; collator.setCaseSensitivity(Qt::CaseInsensitive); collator.setNumericMode(true);
+    auto collator = libraryCollator();
     for (const auto &field : {"name", "title", "artist", "album", "trackSort"}) {
         QVector<int> order(rows.size()), rank(rows.size()); std::iota(order.begin(), order.end(), 0);
         const auto fieldName = QString::fromLatin1(field);
@@ -446,7 +446,7 @@ QVariantList LibraryDatabase::folderChildren(const QString &input) const
         grouped[fullPath] = item;
     }
     QVariantList result; for (const auto &item : grouped) result.append(item);
-    QCollator collator; collator.setCaseSensitivity(Qt::CaseInsensitive); collator.setNumericMode(true);
+    auto collator = libraryCollator();
     std::sort(result.begin(), result.end(), [&collator](const auto &a, const auto &b) { return collator.compare(a.toMap().value("name").toString(), b.toMap().value("name").toString()) < 0; });
     return result;
 }

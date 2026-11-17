@@ -2,6 +2,7 @@
 
 #include <QAbstractTableModel>
 #include <QCollator>
+#include "librarycollation.h"
 #include <QHash>
 #include <QSortFilterProxyModel>
 #include <QVariantMap>
@@ -108,7 +109,7 @@ private:
     bool m_favoritesOnly = false;
     bool m_playedOnly = false;
     QVariantList m_customSmartPlaylists;
-    QCollator m_collator;
+    QCollator m_collator = libraryCollator();
     quint64 m_revision = 0;
     int m_updateDepth = 0, m_announcedCount = 0;
     bool m_pendingNotifications = false, m_publishingNotifications = false;

@@ -53,14 +53,18 @@ jobs:
       - name: Configure
         run: cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$RUNNER_TEMP/taglib"
       - name: Compile
+        id: compile
         run: cmake --build build-linux --parallel 2
       - name: Test
         run: ctest --test-dir build-linux --output-on-failure
       - name: Package and smoke test
+        id: package
+        if: always() && steps.compile.outcome == 'success'
         run: |
           set -o pipefail
           bash packaging/linux/package.sh build-linux 2>&1 | tee build-linux/package.log
       - uses: actions/upload-artifact@v4
+        if: always() && steps.package.outcome == 'success'
         with:
           name: Musica-Linux-x64
           path: dist/Musica-*-linux-x86_64.tar.gz

@@ -52,17 +52,26 @@ jobs:
       - name: Configure
         run: cmake --preset windows-release
       - name: Compile
+        id: compile
         run: cmake --build --preset windows-release --parallel 2
       - name: Test
-        run: ctest --preset windows-release
+        shell: pwsh
+        run: |
+          ctest --test-dir build-windows --output-on-failure 2>&1 | Tee-Object -FilePath build-windows/ctest.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Record dependency versions
+        if: always() && steps.compile.outcome == 'success'
         shell: pwsh
         run: |
           & "$env:VCPKG_ROOT/vcpkg.exe" list | Out-File -Encoding utf8 build-windows/DEPENDENCY-VERSIONS.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Deploy Qt, QML and dependencies
+        id: deploy
+        if: always() && steps.compile.outcome == 'success'
         run: cmake --build build-windows --target windows-deploy
       - name: Check Open With scripts
+        id: scripts
+        if: always() && steps.deploy.outcome == 'success'
         shell: pwsh
         run: |
           foreach ($file in @('Register-OpenWith.ps1', 'Unregister-OpenWith.ps1')) {
@@ -72,6 +81,8 @@ jobs:
             if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           }
       - name: Smoke test the deployed folder without a development PATH
+        id: smoke
+        if: always() && steps.deploy.outcome == 'success'
         shell: pwsh
         run: |
           $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
@@ -84,15 +95,18 @@ jobs:
           $app = Start-Process -FilePath ./build-windows/windows-package/bin/musicplayer.exe -ArgumentList '--smoke-test' -PassThru -Wait
           if ($app.ExitCode -ne 0) { throw "Deployed Musica failed ($($app.ExitCode))." }
       - name: Create zip
+        id: package
+        if: always() && steps.smoke.outcome == 'success' && steps.scripts.outcome == 'success'
         run: cpack --config build-windows/CPackConfig.cmake -C Release -B dist
       - uses: actions/upload-artifact@v4
+        if: always() && steps.package.outcome == 'success'
         with:
           name: Musica-Windows-x64
           path: dist/Musica-*-windows-*.zip
           if-no-files-found: error
       - name: Summarize failures
         if: failure()
-        run: node packaging/report-ci-errors.cjs build-windows/Testing/Temporary/LastTest.log
+        run: node packaging/report-ci-errors.cjs build-windows/ctest.log build-windows/Testing/Temporary/LastTest.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
