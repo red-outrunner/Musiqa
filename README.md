@@ -7,7 +7,7 @@ An offline music player for your own music collection, created by **weo sikho fu
 ## Download and open
 
 - **Windows 10/11, Intel or AMD 64-bit:** download the Windows ZIP, extract the whole folder, then open `bin/musicplayer.exe`. Keep the DLLs and folders beside it. Install the [Microsoft Visual C++ x64 runtime](https://aka.ms/vs/17/release/vc_redist.x64.exe) if Windows asks for it.
-- **Linux, Intel or AMD 64-bit:** download the Linux `.tar.gz`, extract it, then open **Musica** inside the extracted folder. From a terminal in that folder, run `./Musica`. The package targets Ubuntu 22.04 or newer and comparable Linux distributions with a desktop and working system audio.
+- **Linux:** the portable package is still being prepared. If you have already built the app, run `./build/musicplayer` from the project folder. See [building from source](./BUILDING.md) for dependencies.
 
 Choose a built package under **Assets**. The automatic “Source code” downloads are for developers. ARM builds are not provided yet.
 

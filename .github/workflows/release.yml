@@ -1,9 +1,6 @@
 name: Release builds
 
 on:
-  push:
-    branches: [main, master]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:

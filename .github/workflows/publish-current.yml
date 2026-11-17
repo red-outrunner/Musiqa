@@ -1,0 +1,33 @@
+name: Publish Musica 1.0.0
+on:
+  push:
+    tags: [v1.0.0]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify existing build matches application source
+        run: git diff --exit-code 98ac874 HEAD -- '*.cpp' '*.h' '*.qml' qml.qrc assets CMakeLists.txt
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: red-outrunner/Musiqa
+          run-id: 44156422519
+          name: Musica-Windows-x64
+          path: release-assets
+      - name: Publish the available build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --prefix=Musica-1.0.0-source/ HEAD > release-assets/Musica-1.0.0-source.tar.gz
+          (cd release-assets && sha256sum *.zip *.tar.gz > SHA256SUMS.txt)
+          gh release create v1.0.0 --verify-tag --draft --title 'Musica 1.0.0' --notes-file RELEASE_NOTES.md
+          gh release upload v1.0.0 release-assets/*
+          gh release edit v1.0.0 --draft=false --latest
