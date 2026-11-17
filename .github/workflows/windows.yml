@@ -106,10 +106,13 @@ jobs:
           if-no-files-found: error
       - name: Summarize failures
         if: failure()
-        run: node packaging/report-ci-errors.cjs build-windows/ctest.log build-windows/Testing/Temporary/LastTest.log
+        run: node packaging/report-ci-errors.cjs build-windows/ctest.log build-windows/test-results build-windows/Testing/Temporary/LastTest.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: Windows-test-logs
-          path: build-windows/Testing/Temporary/
+          path: |
+            build-windows/Testing/Temporary/
+            build-windows/test-results/
+            build-windows/ctest.log
           if-no-files-found: ignore

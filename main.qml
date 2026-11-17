@@ -813,8 +813,11 @@ ApplicationWindow {
             selectedTrack = trackForUrl(entry.fileUrl);
             currentUrl = entry.fileUrl;
             library.beginPlayback(currentUrl);
-            restorePosition = saved.position || 0;
             player.source = currentUrl;
+            // Install the cached duration before duration/status signals may
+            // restore a seek. The first decoded fragment is not the track length.
+            player.updateTrackInfo(currentUrl, selectedTrack || {});
+            restorePosition = saved.position || 0;
             applyRestoredPosition();
         } else playAfterQueueRestore = false;
         restoringSession = false;
