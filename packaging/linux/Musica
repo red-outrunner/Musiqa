@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+musica_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export PATH="$musica_dir/usr/bin:$PATH"
+exec "$musica_dir/usr/bin/musicplayer" "$@"

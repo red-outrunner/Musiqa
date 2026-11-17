@@ -38,6 +38,8 @@ endif()
 # directory. Preserve any SDK-specific third-party notices supplied by users.
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/licenses/"
         DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses")
+install(FILES "${CMAKE_BINARY_DIR}/DEPENDENCY-VERSIONS.txt"
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}" OPTIONAL)
 foreach(_musica_license_dir ${MUSICA_DEPENDENCY_LICENSE_DIRS})
     if(NOT IS_DIRECTORY "${_musica_license_dir}")
         message(FATAL_ERROR "Missing dependency license directory: ${_musica_license_dir}")

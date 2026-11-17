@@ -1,5 +1,5 @@
 # Musica native player
 
-See the [main README](README.md) for the current Qt 6 prerequisites, VS Code build steps, features, shortcuts, and validation instructions.
+Download and usage instructions are in the [README](./README.md). Developer prerequisites and build guidance are in [BUILDING.md](./BUILDING.md).
 
-The compiled executable is `build/musicplayer`. It contains the interface and artwork resources, so it can be launched from any working directory on a machine with the required Qt runtime libraries.
+Musica uses native Qt 6 audio and a QML interface. Release packages include the required application resources and bundled runtime dependencies.

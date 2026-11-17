@@ -7,8 +7,8 @@ is required.
 
 Describe the problem and intended behavior in an issue or pull request. Keep
 changes focused, use the existing C++17 and QML conventions, and include a
-regression check for a bug when it helps verify the behavior. See the [README](./README.md)
-for dependencies, building with VS Code CMake Tools, and running the test suite.
+regression check for a bug when it helps verify the behavior. See [BUILDING.md](./BUILDING.md)
+for dependencies, building, and running the test suite.
 
 Use temporary, generated audio in tests. Never commit personal music, embedded
 artwork from a music collection, library snapshots, credentials, caches, build

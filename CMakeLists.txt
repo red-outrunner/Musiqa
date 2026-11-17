@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MusicPlayerApp VERSION 5.2.0 LANGUAGES CXX)
+project(MusicPlayerApp VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -169,7 +169,7 @@ else()
     install(FILES assets/musica.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES assets/musica.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps)
 endif()
-install(FILES LICENSE THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md packaging/DEPENDENCIES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 if(WIN32)
     install(FILES WINDOWS_BUILD.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
     install(FILES packaging/windows/Register-OpenWith.ps1 packaging/windows/Unregister-OpenWith.ps1

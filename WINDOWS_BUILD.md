@@ -3,10 +3,9 @@
 Musica builds as `musicplayer.exe` for native Windows 10/11 x64 using Qt 6,
 TagLib 2 and C++17. The project keeps Qt libraries dynamically linked. The
 Linux executable cannot be renamed to `.exe`; Windows needs a matching Windows
-Qt/TagLib toolchain. A Windows build has not been executed on the Linux
-development machine. The checked-in [Windows workflow](.github/workflows/windows.yml)
-builds, tests, deploys and archives a native executable when run on GitHub.
-No workflow run or upload is triggered by adding the file locally.
+Qt/TagLib toolchain. The [Windows workflow](.github/workflows/windows.yml)
+builds, tests, deploys and archives a native executable on GitHub.
+Published packages are available from [Releases](https://github.com/red-outrunner/Musiqa/releases).
 
 ## Prerequisites
 
@@ -19,7 +18,7 @@ No workflow run or upload is triggered by adding the file locally.
 - TagLib **2 or newer**, matching MSVC/x64. The provided presets use vcpkg's
   dynamic `taglib:x64-windows` package. Install this package in vcpkg and set
   `VCPKG_ROOT` to the vcpkg folder. Ensure the selected Qt SDK is discoverable
-  through `CMAKE_PREFIX_PATH` or a CMake Tools Qt kit.
+  through `CMAKE_PREFIX_PATH`.
 - `ffmpeg` and `ffprobe` on PATH for the metadata/audio integration tests.
   End users can play supported formats using Qt's deployed multimedia backend
   without the standalone FFmpeg executable.
@@ -28,14 +27,13 @@ Do not mix MSVC and MinGW libraries or 32/64-bit SDKs. A matching MinGW Qt and
 TagLib toolchain can also compile the sources, but the included Windows CI
 and presets target MSVC x64.
 
-## Build and package in VS Code
+## Build and package
 
-1. Launch VS Code from an **x64 Native Tools Command Prompt for VS 2022**, or
-   select an equivalent MSVC Qt kit in CMake Tools.
-2. Use **CMake: Select Configure Preset → windows-release**. This workspace's
-   local settings may disable presets: enable CMake Tools presets on the
-   Windows machine or use an equivalent Qt/MSVC kit and vcpkg toolchain.
-3. Use **CMake: Build**. The result is `build-windows/musicplayer.exe`.
+1. Use an **x64 Native Tools Command Prompt for VS 2022**, or a build environment
+   configured for the same MSVC compiler.
+2. Configure CMake with the **windows-release** preset, the matching Qt SDK,
+   and the vcpkg toolchain.
+3. Build the default target. The result is `build-windows/musicplayer.exe`.
 4. Run the discovered CMake tests. They include Unicode metadata filenames,
    Open With forwarding, playback, QML interfaces and high-DPI checks.
 5. Build the **windows-deploy** target to collect a runnable folder under

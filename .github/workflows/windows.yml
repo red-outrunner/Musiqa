@@ -2,6 +2,7 @@ name: Windows build and package
 
 on:
   workflow_dispatch:
+  workflow_call:
   pull_request:
   push:
     branches: [main, master]
@@ -21,12 +22,16 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
           arch: win64_msvc2022_64
-          modules: qtmultimedia qtsvg
+          modules: qtmultimedia
+          setup-python: false
           cache: true
       - name: Install TagLib and test media tools
         shell: pwsh
@@ -46,6 +51,11 @@ jobs:
         run: cmake --build --preset windows-release --parallel 2
       - name: Test
         run: ctest --preset windows-release
+      - name: Record dependency versions
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT/vcpkg.exe" list | Out-File -Encoding utf8 build-windows/DEPENDENCY-VERSIONS.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Deploy Qt, QML and dependencies
         run: cmake --build build-windows --target windows-deploy
       - name: Check Open With scripts
@@ -81,3 +91,4 @@ jobs:
         with:
           name: Windows-test-logs
           path: build-windows/Testing/Temporary/
+          if-no-files-found: ignore
