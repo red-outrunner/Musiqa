@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   linux:
     runs-on: ubuntu-22.04
@@ -21,7 +25,12 @@ jobs:
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build zlib1g-dev ffmpeg dbus-x11 libxcb-cursor0 libxkbcommon-x11-0 libpulse0
+          sudo apt-get install -y ninja-build zlib1g-dev ffmpeg dbus-x11 libxcb-cursor0 libxkbcommon-x11-0 libpulse0 pulseaudio
+      - name: Start a virtual audio output for playback tests
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=musica_tests
+          pactl set-default-sink musica_tests
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
