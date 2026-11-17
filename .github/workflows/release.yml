@@ -46,7 +46,7 @@ jobs:
       - name: Build TagLib
         if: steps.taglib.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --branch v2.1.1 https://github.com/taglib/taglib.git "$RUNNER_TEMP/taglib-source"
+          git clone --depth 1 --recurse-submodules --shallow-submodules --branch v2.1.1 https://github.com/taglib/taglib.git "$RUNNER_TEMP/taglib-source"
           cmake -S "$RUNNER_TEMP/taglib-source" -B "$RUNNER_TEMP/taglib-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BINDINGS=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/taglib"
           cmake --build "$RUNNER_TEMP/taglib-build" --parallel 2
           cmake --install "$RUNNER_TEMP/taglib-build"
