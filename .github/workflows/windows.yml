@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
@@ -90,6 +90,9 @@ jobs:
           name: Musica-Windows-x64
           path: dist/Musica-*-windows-*.zip
           if-no-files-found: error
+      - name: Summarize failures
+        if: failure()
+        run: node packaging/report-ci-errors.cjs build-windows/Testing/Temporary/LastTest.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

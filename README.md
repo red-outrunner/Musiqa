@@ -22,7 +22,7 @@ Library scanning is manual. After adding or moving music on disk, use the scan b
 
 ## Everyday controls
 
-- **Queue:** the queue button opens and closes the playing list. Search it, drag songs to reorder, or use **×** to remove a song. **Current song** jumps back to the playing track.
+- **Queue:** the queue button opens and closes the playing list. Search it, use **×** to remove a song, or clear the search and drag songs to reorder. **Current song** jumps back to the playing track.
 - **Multiple queues:** starting another collection creates a named queue. Musica keeps up to four; the oldest is replaced when full. Use the queue menu to save one as a playlist.
 - **Song menus:** right-click a song or use **⋯** to play next, add to a queue or playlist, share, view information, or edit metadata.
 - **Favorites:** click the heart; a red heart marks a favorite. **Most Played** counts a play after at least half the song has been heard.

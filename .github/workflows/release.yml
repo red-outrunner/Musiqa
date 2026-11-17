@@ -57,12 +57,17 @@ jobs:
       - name: Test
         run: ctest --test-dir build-linux --output-on-failure
       - name: Package and smoke test
-        run: bash packaging/linux/package.sh build-linux
+        run: |
+          set -o pipefail
+          bash packaging/linux/package.sh build-linux 2>&1 | tee build-linux/package.log
       - uses: actions/upload-artifact@v4
         with:
           name: Musica-Linux-x64
           path: dist/Musica-*-linux-x86_64.tar.gz
           if-no-files-found: error
+      - name: Summarize failures
+        if: failure()
+        run: node packaging/report-ci-errors.cjs build-linux/Testing/Temporary/LastTest.log build-linux/package.log
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
