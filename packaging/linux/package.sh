@@ -24,9 +24,13 @@ export QML_SOURCES_PATHS="$source_dir"
 export EXTRA_QT_MODULES="svg;multimedia;sql"
 export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so"
 
+# linuxdeploy accepts standard desktop icon sizes; keep the original artwork
+# untouched and generate a 512px packaging copy.
+ffmpeg -nostdin -v error -y -i assets/musica.png -vf scale=512:512 \
+    -frames:v 1 "$tools_dir/musica.png"
 linuxdeploy-x86_64.AppImage --appdir "$package_dir" \
     --executable "$build_dir/musicplayer" \
-    --desktop-file assets/musica.desktop --icon-file assets/musica.png --plugin qt
+    --desktop-file assets/musica.desktop --icon-file "$tools_dir/musica.png" --plugin qt
 
 # The Qt plugin supplies qt.conf and relocatable library paths. A plain launcher
 # makes this an extract-and-run archive without requiring FUSE.

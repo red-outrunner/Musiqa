@@ -21,6 +21,7 @@
 #include <QLockFile>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QTemporaryFile>
 #include <cmath>
 
@@ -199,16 +200,24 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
     const auto before = readImpl(path, {}, true);
     if (before.contains("error")) return before;
     if (before.value("revision").toString() != expectedRevision) return failure(QStringLiteral("The song changed since you opened the editor. Reopen it before saving. Nothing was changed."));
-    QTemporaryFile temporary(QDir(info.absolutePath()).filePath(QStringLiteral(".musica-edit-XXXXXX.") + info.suffix()));
-    if (!temporary.open()) return failure(QStringLiteral("Couldn't create a temporary copy beside the song: %1").arg(temporary.errorString()));
-    QFile original(path);
-    if (!original.open(QIODevice::ReadOnly)) return failure(QStringLiteral("Couldn't read the original song."));
-    while (!original.atEnd()) {
-        const auto chunk = original.read(1024 * 1024);
-        if (chunk.isEmpty() || temporary.write(chunk) != chunk.size()) return failure(QStringLiteral("Couldn't copy the song. Check available disk space. Nothing was changed."));
+    QString temporaryName;
+    const auto cleanup = qScopeGuard([&temporaryName] { if (!temporaryName.isEmpty()) QFile::remove(temporaryName); });
+    {
+        QTemporaryFile temporary(QDir(info.absolutePath()).filePath(QStringLiteral(".musica-edit-XXXXXX.") + info.suffix()));
+        if (!temporary.open()) return failure(QStringLiteral("Couldn't create a temporary copy beside the song: %1").arg(temporary.errorString()));
+        QFile original(path);
+        if (!original.open(QIODevice::ReadOnly)) return failure(QStringLiteral("Couldn't read the original song."));
+        while (!original.atEnd()) {
+            const auto chunk = original.read(1024 * 1024);
+            if (chunk.isEmpty() || temporary.write(chunk) != chunk.size()) return failure(QStringLiteral("Couldn't copy the song. Check available disk space. Nothing was changed."));
+        }
+        if (!temporary.flush()) return failure(QStringLiteral("Couldn't finish the temporary copy. Nothing was changed."));
+        temporaryName = temporary.fileName();
+        temporary.setAutoRemove(false);
+        // QTemporaryFile::close() keeps its native handle. Destroy it before
+        // TagLib opens the file; Windows otherwise denies the second writer.
     }
-    original.close(); temporary.close();
-    const auto encoded = TagLibPath::encode(temporary.fileName());
+    const auto encoded = TagLibPath::encode(temporaryName);
     {
         TagLib::FileRef file(TagLibPath::data(encoded), true, TagLib::AudioProperties::Accurate);
         if (file.isNull() || !file.file()->isValid()) return failure(QStringLiteral("The temporary song could not be opened for tagging."));
@@ -301,7 +310,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
         if (!legacy.isValid()) return failure(QStringLiteral("The edited AIFF file couldn't be reopened. The original was kept."));
         legacy.synchronize(normalized);
     }
-    const auto verified = readImpl(temporary.fileName(), {}, false);
+    const auto verified = readImpl(temporaryName, {}, false);
     if (verified.contains("error")) return failure(QStringLiteral("The edited file failed verification. The original was kept."));
     const auto verifiedFields = verified.value("fields").toMap();
     for (auto it = normalized.cbegin(); it != normalized.cend(); ++it) {
@@ -318,7 +327,7 @@ QVariantMap FileTags::write(const QString &path, const QVariantMap &changes, con
     if (coverAction == "remove" && verified.value("embeddedCover").toBool()) return failure(QStringLiteral("The embedded cover could not be removed. The original was kept."));
     if (coverAction == "keep" && verified.value("coverHash") != before.value("coverHash")) return failure(QStringLiteral("Existing artwork changed unexpectedly. The original was kept."));
     QSaveFile destination(path); destination.setDirectWriteFallback(false);
-    QFile edited(temporary.fileName());
+    QFile edited(temporaryName);
     if (!edited.open(QIODevice::ReadOnly) || !destination.open(QIODevice::WriteOnly)) return failure(QStringLiteral("Couldn't replace the song safely. The original was kept."));
     while (!edited.atEnd()) {
         const auto chunk = edited.read(1024 * 1024);
