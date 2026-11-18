@@ -42,9 +42,9 @@ class PracticalUiTests : public QObject
         for (auto *child : parent->childItems()) if (auto *found = findItem(child, name)) return found;
         return nullptr;
     }
-    static bool click(QQuickWindow *window, const QString &name)
+    static bool click(QQuickWindow *window, const QString &name, QQuickItem *parent = nullptr)
     {
-        auto *item = findItem(window->contentItem(), name);
+        auto *item = findItem(parent ? parent : window->contentItem(), name);
         if (!item || !item->isVisible() || !item->isEnabled() || item->width() <= 0 || item->height() <= 0) return false;
         const auto point = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
         if (!QRectF(0, 0, window->width(), window->height()).contains(point)) return false;
@@ -184,6 +184,108 @@ private slots:
             QCOMPARE(warnings.size(), 0);
         }
         TrackListModel restored(QSettings().fileName(), false); QVERIFY(restored.collectionPinned("album", pinnedAlbum)); QCOMPARE(restored.pinnedCollections().size(), 1);
+    }
+
+    void completedQueueAndPlaylistActionsDeselectTheirSongs()
+    {
+        QVERIFY(seedLibrary());
+        QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        QTRY_VERIFY(window->property("sessionRestored").toBool()); window->resize(1200, 800);
+        QVERIFY(click(window, "navSongs"));
+        const auto tracks = library->tracks(); QCOMPARE(tracks.size(), 2);
+        const auto firstUrl = tracks[0].toMap().value("fileUrl");
+        const auto secondUrl = tracks[1].toMap().value("fileUrl");
+        const QVariantList urls{firstUrl, secondUrl};
+        const auto action = [window](const QString &name, const QVariantList &songs) {
+            return QMetaObject::invokeMethod(window, "handleBatchAction", Q_ARG(QVariant, name), Q_ARG(QVariant, songs));
+        };
+        window->setProperty("selectedUrls", urls); QVERIFY(click(window, "queueSelectedSongs"));
+        QCOMPARE(window->property("queueCount").toInt(), 2); QCOMPARE(window->property("selectedCount").toInt(), 0);
+        QVERIFY(!findItem(window->contentItem(), "selectionBar")->isVisible());
+        window->setProperty("selectedUrls", urls); QVERIFY(action("next", {tracks[0]}));
+        QCOMPARE(values(window, "selectedUrls"), QVariantList{secondUrl});
+        QVERIFY(action("favorite", {tracks[1]})); QCOMPARE(window->property("selectedCount").toInt(), 0);
+
+        const auto id = library->createPlaylist("Existing playlist"); QVERIFY(!id.isEmpty());
+        window->setProperty("selectedUrls", urls); QVERIFY(action("playlist", tracks));
+        auto *dialog = window->findChild<QObject *>("playlistDialog"); QVERIFY(dialog);
+        QCOMPARE(window->property("selectedCount").toInt(), 2);
+        QVERIFY(QMetaObject::invokeMethod(dialog, "reject"));
+        QTRY_VERIFY(!window->findChild<QObject *>("playlistDialog")); QCOMPARE(window->property("selectedCount").toInt(), 2);
+
+        QVERIFY(action("playlist", tracks));
+        auto *name = findItem(window->contentItem(), "playlistNameField"); QVERIFY(name);
+        name->setProperty("text", "Existing playlist"); QVERIFY(click(window, "createPlaylistButton"));
+        QCOMPARE(window->property("selectedCount").toInt(), 2); // Failed creation keeps the selection.
+        name->setProperty("text", "New playlist"); QVERIFY(click(window, "createPlaylistButton"));
+        QTRY_VERIFY(!window->findChild<QObject *>("playlistDialog")); QCOMPARE(window->property("selectedCount").toInt(), 0);
+        QCOMPARE(library->playlists()->count(), 2);
+
+        // Choosing an existing playlist also clears the selection, including songs already in it.
+        for (int pass = 0; pass < 2; ++pass) {
+            window->setProperty("selectedUrls", urls); QVERIFY(action("playlist", tracks));
+            dialog = window->findChild<QObject *>("playlistDialog"); QVERIFY(dialog);
+            auto *content = dialog->property("contentItem").value<QQuickItem *>(); QVERIFY(content);
+            QTRY_VERIFY(findItem(content, "choosePlaylist0"));
+            QTRY_VERIFY(insideWindow(window, findItem(content, "choosePlaylist0")));
+            QVERIFY(click(window, "choosePlaylist0", content));
+            QTRY_VERIFY(!window->findChild<QObject *>("playlistDialog")); QCOMPARE(window->property("selectedCount").toInt(), 0);
+        }
+        QCOMPARE(library->tracksForGroup("playlist", id).size(), 2);
+        QCOMPARE(warnings.size(), 0);
+    }
+
+    void metadataDeselectsOnlySongsThatWereSaved_data()
+    {
+        QTest::addColumn<bool>("partialFailure");
+        QTest::newRow("all-saved") << false;
+        QTest::newRow("one-stale-file") << true;
+    }
+
+    void metadataDeselectsOnlySongsThatWereSaved()
+    {
+        QFETCH(bool, partialFailure);
+        QVERIFY(seedLibrary());
+        QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        QTRY_VERIFY(window->property("sessionRestored").toBool()); window->resize(1200, 800);
+        const auto tracks = library->tracks(); QCOMPARE(tracks.size(), 2);
+        const auto firstUrl = tracks[0].toMap().value("fileUrl");
+        const auto secondUrl = tracks[1].toMap().value("fileUrl");
+        window->setProperty("selectedUrls", QVariantList{firstUrl, secondUrl});
+        const auto openEditor = [window, &tracks] {
+            return QMetaObject::invokeMethod(window, "handleBatchAction", Q_ARG(QVariant, QString("metadata")), Q_ARG(QVariant, tracks));
+        };
+        QVERIFY(openEditor());
+        auto *editor = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(editor);
+        QTRY_VERIFY(editor->property("ready").toBool());
+        QVERIFY(click(window, "cancelBatchMetadataButton"));
+        QTRY_VERIFY(!window->findChild<QObject *>("batchMetadataEditor")); QCOMPARE(window->property("selectedCount").toInt(), 2);
+        QVERIFY(openEditor()); editor = window->findChild<QObject *>("batchMetadataEditor"); QVERIFY(editor);
+        QTRY_VERIFY(editor->property("ready").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor, "applyField", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, true)));
+        QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, QString("Soul"))));
+        if (partialFailure) {
+            // An external audio edit after opening makes this file's revision stale.
+            QFile file(QUrl(secondUrl.toString()).toLocalFile()); QVERIFY(file.open(QIODevice::ReadWrite));
+            QVERIFY(file.seek(44)); QCOMPARE(file.write("\x01", 1), qint64(1)); file.close();
+        }
+        QSignalSpy saved(library, &TrackListModel::batchMetadataSaved);
+        QVERIFY(click(window, "saveBatchMetadataButton")); QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
+        QTRY_COMPARE(window->property("selectedCount").toInt(), partialFailure ? 1 : 0);
+        QCOMPARE(library->trackForUrl(firstUrl.toString()).value("genre").toString(), QString("Soul"));
+        if (partialFailure) {
+            QCOMPARE(values(window, "selectedUrls"), QVariantList{secondUrl});
+            QVERIFY(editor->property("visible").toBool()); QVERIFY(editor->property("finished").toBool());
+            QCOMPARE(values(editor, "urls"), QVariantList{secondUrl});
+        } else {
+            QTRY_VERIFY(!window->findChild<QObject *>("batchMetadataEditor"));
+            QVERIFY(!findItem(window->contentItem(), "selectionBar")->isVisible());
+        }
+        QCOMPARE(warnings.size(), 0);
     }
 
     void nowPlayingControlsStayPutWhenTitlesWrap_data()

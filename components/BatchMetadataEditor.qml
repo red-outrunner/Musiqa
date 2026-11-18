@@ -19,7 +19,7 @@ Dialog {
     property int completed: 0
     readonly property bool busy: library.metadataBusy
     readonly property bool hasChanges: Object.keys(applied).some(key => applied[key]) || coverAction !== "keep"
-    signal saved(int count)
+    signal saved(int count, var savedUrls)
 
     function begin(tracks) {
         urls = tracks.map(track => track.fileUrl);
@@ -64,8 +64,9 @@ Dialog {
         function onBatchMetadataProgress(completed, total) { if (root.visible) root.completed = completed; }
         function onBatchMetadataSaved(result) {
             if (!root.visible) return;
-            const count = Object.keys(result.saved || {}).length;
-            if (count) root.saved(count);
+            const savedUrls = Object.keys(result.saved || {});
+            const count = savedUrls.length;
+            if (count) root.saved(count, savedUrls);
             const errors = result.errors || [];
             if (!errors.length) { root.close(); return; }
             root.urls = errors.map(item => item.fileUrl);

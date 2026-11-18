@@ -516,7 +516,7 @@ ApplicationWindow {
         return activePage;
     }
     function startPlayback(track, tracks, name, shuffle) {
-        if (!track || !tracks || !tracks.length || !tracks.some(item => item.fileUrl === track.fileUrl)) return;
+        if (!track || !tracks || !tracks.length || !tracks.some(item => item.fileUrl === track.fileUrl)) return false;
         if (!sessionRestored) restoreSession();
         // Save the outgoing queue before changing its shuffle state or order.
         persistSession();
@@ -529,7 +529,7 @@ ApplicationWindow {
         }
         const id = library.startPlaybackQueue(name || track.title || "Queue", {queue: items, source: source,
             currentId: selected.id, position: 0, shuffle: !!shuffle, repeat: repeatMode, serial: queueSerial, muted: muted});
-        if (!id) return;
+        if (!id) return false;
         undoHistory = undoHistory.filter(action => action.kind !== "queue" || action.bank !== id);
         restoringSession = true;
         queueSource = source;
@@ -540,6 +540,7 @@ ApplicationWindow {
         playQueueItem(selected.id);
         sessionSave.restart();
         Qt.callLater(function() { if (queueOpen) queuePopup.scrollToCurrentSong(); });
+        return true;
     }
     function enqueueTrack(track, playNext) {
         if (track) enqueueTracks([track], playNext);
@@ -572,22 +573,30 @@ ApplicationWindow {
         const shown = visible.map(track => track.fileUrl);
         return visible.concat(selectedUrls.filter(url => shown.indexOf(url) < 0).map(url => library.trackForUrl(url)).filter(track => !!track.fileUrl));
     }
+    function deselectSongs(urls) {
+        if (!selectedUrls.length || !urls.length) return;
+        const completed = new Set(urls);
+        selectedUrls = selectedUrls.filter(url => !completed.has(url));
+    }
     function handleBatchAction(action, tracks) {
         if (!tracks || !tracks.length) return;
         const urls = tracks.map(track => track.fileUrl);
         if (action === "play" || action === "shuffle") {
             const shuffle = action === "shuffle";
             const name = (collectionName || "Selected songs") + (collectionName ? " · Selection" : "");
-            startPlayback(shuffle ? shuffled(tracks)[0] : tracks[0], tracks, name, shuffle);
-        } else if (action === "queue" || action === "next") enqueueTracks(tracks, action === "next");
-        else if (action === "playlist") {
+            if (startPlayback(shuffle ? shuffled(tracks)[0] : tracks[0], tracks, name, shuffle)) deselectSongs(urls);
+        } else if (action === "queue" || action === "next") {
+            enqueueTracks(tracks, action === "next");
+            deselectSongs(urls);
+        } else if (action === "playlist") {
             playlistDialog.track = null; playlistDialog.tracks = tracks; playlistDialog.open();
         } else if (action === "favorite" || action === "unfavorite") {
             library.setTracksFavorite(urls, action === "favorite");
+            deselectSongs(urls);
             showToast(action === "favorite" ? "Added to favorites." : "Removed from favorites.");
         } else if (action === "metadata") batchMetadataEditor.begin(tracks);
         else if (action === "trash") { trashDialog.track = null; trashDialog.tracks = tracks; trashDialog.open(); }
-        else if (action === "removePlaylist") library.removeTracksFromPlaylist(collectionId, urls);
+        else if (action === "removePlaylist" && library.removeTracksFromPlaylist(collectionId, urls)) deselectSongs(urls);
     }
     function openGroupMenu(group, kind, anchor, mouse) {
         groupMenu.group = group; groupMenu.kind = kind;
@@ -1214,6 +1223,7 @@ ApplicationWindow {
         parent: Overlay.overlay
         library: win.libraryBackend
         onSaved: function (name) {
+            win.deselectSongs(playlistDialogContent.urls);
             win.showToast("Saved to playlist: " + name);
         }
     }
@@ -1342,6 +1352,7 @@ ApplicationWindow {
         parent: Overlay.overlay
         library: win.libraryBackend
         onSaved: function(url) {
+            win.deselectSongs([url]);
             win.refreshCollectionAfterMetadata([url]);
             win.showToast("Metadata and artwork saved to the audio file.");
         }
@@ -1355,8 +1366,9 @@ ApplicationWindow {
         objectName: "batchMetadataEditor"
         parent: Overlay.overlay
         library: win.libraryBackend
-        onSaved: function(count) {
-            win.refreshCollectionAfterMetadata(urls);
+        onSaved: function(count, savedUrls) {
+            win.deselectSongs(savedUrls);
+            win.refreshCollectionAfterMetadata(savedUrls);
             win.showToast("Metadata saved to " + count + (count === 1 ? " audio file." : " audio files."));
         }
     }
