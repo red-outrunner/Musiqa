@@ -27,6 +27,33 @@ class LibraryUsabilityTests : public QObject
         settings.setValue("library/snapshot", fixtureTracks(root)); settings.sync();
     }
 private slots:
+    void metadataSuggestionsUseSavedNamesWithoutScanningOrLoadingSongs()
+    {
+        QTemporaryDir temp; QVERIFY(temp.isValid()); const auto file = temp.filePath("library.ini"); seed(file);
+        { TrackListModel migrate(file, false); }
+        TrackListModel library(file, false);
+        QCOMPARE(library.residentTrackCount(), 0);
+        QSignalSpy scanned(&library, &TrackListModel::scanningChanged);
+        // Suggestions are independent of the collection currently filtered on screen.
+        library.artists()->setSearch("no visible artists"); QCOMPARE(library.artists()->count(), 0);
+        QCOMPARE(library.metadataSuggestions("artist", "JÖR"), QStringList{QStringLiteral("Björk")});
+        QCOMPARE(library.metadataSuggestions("albumArtist", "rti"), QStringList{QStringLiteral("Artist")});
+        QCOMPARE(library.metadataSuggestions("album", " ALB "), QStringList{QStringLiteral("Album")});
+        QCOMPARE(library.metadataSuggestions("genre", "MBI"), QStringList{QStringLiteral("Ambient")});
+        QVERIFY(library.metadataSuggestions("title", "Song").isEmpty());
+        QVERIFY(library.metadataSuggestions("artist", " ").isEmpty());
+        QVERIFY(library.metadataSuggestions("album", "%").isEmpty());
+        QVERIFY(library.metadataSuggestions("artist", "' OR 1=1 --").isEmpty());
+        QCOMPARE(library.residentTrackCount(), 0); QVERIFY(!library.scanning()); QCOMPARE(scanned.size(), 0);
+
+        LibraryDatabase database(temp.filePath("suggestions.sqlite")); QVERIFY(database.valid());
+        QVariantList albums;
+        for (int i = 0; i < 30; ++i) albums.append(QVariantMap{{"id", QString::number(i)}, {"name", QString("Live album %1").arg(i)}, {"subtitle", "Solo Artist"}});
+        QVERIFY(database.replace({}, albums, {}, {}));
+        QCOMPARE(database.matchingMetadataNames("album", "live").size(), 8);
+        QVERIFY(database.matchingMetadataNames("album", "Solo Artist").isEmpty());
+    }
+
     void combinedFilters_data()
     {
         QTest::addColumn<bool>("paged");

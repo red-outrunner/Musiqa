@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
@@ -332,6 +333,25 @@ QStringList LibraryDatabase::matchingSongUrls(const QStringList &urls, const QSt
     }
     return found;
 }
+QStringList LibraryDatabase::matchingMetadataNames(const QString &kind, const QString &text) const
+{
+    const auto needle = folded(text.trimmed());
+    if (needle.isEmpty() || (kind != "artist" && kind != "album" && kind != "genre")) return {};
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    query.prepare("SELECT payload FROM entries WHERE kind=? AND instr(search,?)>0 ORDER BY nrank");
+    query.addBindValue(kind); query.addBindValue(needle);
+    QStringList result; QSet<QString> seen;
+    if (query.exec()) while (query.next() && result.size() < 8) {
+        const auto name = decoded(query.value(0)).toMap().value("name").toString().trimmed();
+        const auto key = folded(name);
+        // Collection search also includes subtitles; only suggest matching names.
+        if (!key.contains(needle) || seen.contains(key)) continue;
+        seen.insert(key); result.append(name);
+    }
+    return result;
+}
+
 QVariantMap LibraryDatabase::entry(const QString &kind, const QString &id) const
 {
     QSqlQuery query(m_db); query.prepare("SELECT payload FROM entries WHERE kind=? AND id=?"); query.addBindValue(kind); query.addBindValue(id);

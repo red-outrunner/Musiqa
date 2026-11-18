@@ -288,6 +288,65 @@ private slots:
         QCOMPARE(warnings.size(), 0);
     }
 
+    void metadataEditorsSuggestExistingNames_data()
+    {
+        QTest::addColumn<bool>("batch"); QTest::addColumn<QString>("key");
+        QTest::addColumn<QString>("query"); QTest::addColumn<QString>("expected"); QTest::addColumn<bool>("compact");
+        for (bool batch : {false, true}) {
+            const auto prefix = batch ? "batch-" : "single-";
+            QTest::newRow(qPrintable(QString(prefix) + "artist")) << batch << QString("artist") << QString("rti") << QString("Artist") << false;
+            QTest::newRow(qPrintable(QString(prefix) + "album-artist")) << batch << QString("albumArtist") << QString("rti") << QString("Artist") << false;
+            QTest::newRow(qPrintable(QString(prefix) + "album")) << batch << QString("album") << QString("irst") << QString("First album") << false;
+            QTest::newRow(qPrintable(QString(prefix) + "genre")) << batch << QString("genre") << QString("oc") << QString("Rock") << false;
+        }
+        QTest::newRow("compact-large-text") << true << QString("genre") << QString("oc") << QString("Rock") << true;
+    }
+
+    void metadataEditorsSuggestExistingNames()
+    {
+        QFETCH(bool, batch); QFETCH(QString, key); QFETCH(QString, query); QFETCH(QString, expected); QFETCH(bool, compact);
+        QVERIFY(seedLibrary());
+        QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display);
+        const auto restore = qScopeGuard([display] { display->reset(); });
+        display->reset(); display->setTextScale(compact ? 1.5 : 1.0); window->resize(compact ? QSize(720, 480) : QSize(1200, 900));
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
+        const auto tracks = library->tracks(); QCOMPARE(tracks.size(), 2);
+        auto *loader = window->findChild<QObject *>(batch ? "batchMetadataEditorLoader" : "metadataEditorLoader"); QVERIFY(loader);
+        QVERIFY(QMetaObject::invokeMethod(loader, "begin", Q_ARG(QVariant, batch ? QVariant(tracks) : tracks[0].toMap().value("fileUrl"))));
+        auto *editor = window->findChild<QObject *>(batch ? "batchMetadataEditor" : "metadataEditor"); QVERIFY(editor);
+        QTRY_VERIFY(editor->property("ready").toBool());
+        if (batch) QVERIFY(QMetaObject::invokeMethod(editor, "applyField", Q_ARG(QVariant, key), Q_ARG(QVariant, true)));
+        const auto fieldName = (batch ? "batchMetadata_" : "metadata_") + key;
+        QVERIFY(revealInScroll(window, fieldName, batch ? "batchMetadataForm" : "metadataForm"));
+        auto *field = findItem(window->contentItem(), fieldName); QVERIFY(field && field->isEnabled());
+        QVERIFY(!field->property("suggestionsOpen").toBool());
+        const auto typeQuery = [&] {
+            field->forceActiveFocus(); QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+            for (const auto character : query) QTest::keyClick(window, character.toLatin1());
+        };
+        typeQuery(); QTRY_VERIFY(field->property("suggestionsOpen").toBool());
+        QVERIFY(values(field, "suggestions").contains(expected)); QCOMPARE(field->property("text").toString(), query);
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!field->property("suggestionsOpen").toBool()); QVERIFY(editor->property("visible").toBool());
+        typeQuery(); QTRY_VERIFY(field->property("suggestionsOpen").toBool());
+        if (batch) {
+            QTRY_VERIFY(findItem(window->contentItem(), fieldName + "Suggestion0"));
+            QVERIFY(click(window, fieldName + "Suggestion0"));
+        } else {
+            QTest::keyClick(window, Qt::Key_Down); QTest::keyClick(window, Qt::Key_Return);
+        }
+        QCOMPARE(field->property("text").toString(), expected); QVERIFY(!field->property("suggestionsOpen").toBool());
+        const auto draftValue = editor->property("draft");
+        const auto draft = draftValue.metaType() == QMetaType::fromType<QJSValue>() ? draftValue.value<QJSValue>().toVariant().toMap() : draftValue.toMap();
+        QCOMPARE(draft.value(key).toString(), expected);
+        QVERIFY(editor->property("visible").toBool()); QVERIFY(!library->scanning());
+        QVERIFY(click(window, batch ? "cancelBatchMetadataButton" : "cancelMetadataButton"));
+        QCOMPARE(warnings.size(), 0);
+    }
+
     void nowPlayingControlsStayPutWhenTitlesWrap_data()
     {
         QTest::addColumn<QSize>("size"); QTest::addColumn<double>("scale");

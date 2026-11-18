@@ -25,6 +25,7 @@ public:
     bool replace(const QVariantList &songs, const QVariantList &albums, const QVariantList &artists, const QVariantList &playlists);
     QStringList ids(const QString &kind, const LibraryQuery &query = {}) const;
     QStringList matchingSongUrls(const QStringList &urls, const QString &search = {}) const;
+    QStringList matchingMetadataNames(const QString &kind, const QString &text) const;
     QVariantMap entry(const QString &kind, const QString &id) const;
     QVariantList page(const QString &kind, const QStringList &ids, int first, int length) const;
     QVariantList all(const QString &kind) const;

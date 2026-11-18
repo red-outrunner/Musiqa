@@ -92,6 +92,7 @@ public:
     bool libraryReady() const { return m_libraryReady; }
     QVariantList smartPlaylists() const;
     bool metadataBusy() const { return m_metadataBusy; }
+    Q_INVOKABLE QStringList metadataSuggestions(const QString &field, const QString &text) const;
     Q_INVOKABLE void loadSongMetadata(const QString &url);
     Q_INVOKABLE bool saveSongMetadata(const QString &url, const QVariantMap &changes, const QString &coverAction, const QUrl &coverFile, const QString &revision);
     Q_INVOKABLE void loadBatchMetadata(const QStringList &urls);

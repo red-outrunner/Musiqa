@@ -9,6 +9,25 @@ namespace {
 QString artworkDirectory() { return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/artwork"); }
 }
 
+QStringList TrackListModel::metadataSuggestions(const QString &field, const QString &text) const
+{
+    const auto kind = field == "albumArtist" ? QStringLiteral("artist") : field;
+    const auto needle = text.trimmed().normalized(QString::NormalizationForm_KC).toCaseFolded();
+    if (needle.isEmpty() || (kind != "artist" && kind != "album" && kind != "genre")) return {};
+    // Read collection names from the saved database, without loading or probing songs.
+    if (m_database && m_database->valid()) return m_database->matchingMetadataNames(kind, text);
+    const auto *entries = kind == "album" ? &m_albumEntries : kind == "artist" ? &m_artistEntries : &m_genreEntries;
+    QStringList matches; QSet<QString> seen;
+    for (int row = 0; row < entries->rowCount(); ++row) {
+        const auto name = entries->data(entries->index(row, 0), LibraryEntryModel::NameRole).toString().trimmed();
+        const auto key = name.normalized(QString::NormalizationForm_KC).toCaseFolded();
+        if (!key.contains(needle) || seen.contains(key)) continue;
+        seen.insert(key); matches.append(name);
+    }
+    matches.sort(Qt::CaseInsensitive);
+    return matches.mid(0, 8);
+}
+
 void TrackListModel::initializeMetadataEditing()
 {
     connect(&m_metadataWatcher, &QFutureWatcher<QVariantMap>::finished, this, [this] { finishMetadataOperation(false); });

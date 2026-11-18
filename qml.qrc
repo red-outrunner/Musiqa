@@ -37,6 +37,7 @@
         <file>components/PlaybackOptions.qml</file>
         <file>components/SleepTimerPopup.qml</file>
         <file>components/MetadataEditor.qml</file>
+        <file>components/MetadataTextField.qml</file>
         <file>components/BatchMetadataEditor.qml</file>
         <file>assets/musica.png</file>
         <file>components/OverviewPane.qml</file>

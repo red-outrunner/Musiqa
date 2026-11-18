@@ -132,8 +132,10 @@ Dialog {
                                 checked: !!root.applied[field.modelData.key]
                                 onToggled: root.applyField(field.modelData.key, checked)
                             }
-                            TextField {
+                            MetadataTextField {
                                 objectName: "batchMetadata_" + field.modelData.key
+                                library: root.library
+                                metadataKey: field.modelData.key
                                 Layout.fillWidth: true
                                 Layout.leftMargin: Theme.dp(30)
                                 enabled: !!root.applied[field.modelData.key]
@@ -146,6 +148,7 @@ Dialog {
                                 maximumLength: 4096
                                 Accessible.name: field.modelData.label
                                 onTextEdited: root.edit(field.modelData.key, text)
+                                onSuggestionChosen: function(value) { root.edit(field.modelData.key, value); }
                                 background: Rectangle {
                                     radius: Theme.dp(6)
                                     color: Theme.input

@@ -129,8 +129,10 @@ Dialog {
                             Layout.fillWidth: true
                             spacing: Theme.gap(4)
                             Text { text: parent.modelData.label; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)}
-                            TextField {
+                            MetadataTextField {
                                 objectName: "metadata_" + modelData.key
+                                library: root.library
+                                metadataKey: modelData.key
                                 Layout.fillWidth: true
                                 text: (root.initial.fields || {})[modelData.key] || ""
                                 selectByMouse: true
