@@ -15,6 +15,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlError>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -183,6 +184,52 @@ private slots:
             QCOMPARE(warnings.size(), 0);
         }
         TrackListModel restored(QSettings().fileName(), false); QVERIFY(restored.collectionPinned("album", pinnedAlbum)); QCOMPARE(restored.pinnedCollections().size(), 1);
+    }
+
+    void nowPlayingControlsStayPutWhenTitlesWrap_data()
+    {
+        QTest::addColumn<QSize>("size"); QTest::addColumn<double>("scale");
+        QTest::newRow("normal") << QSize(1000, 650) << 1.0;
+        QTest::newRow("compact-large-text") << QSize(600, 380) << 1.5;
+        QTest::newRow("fullscreen") << QSize(1920, 1080) << 1.0;
+    }
+
+    void nowPlayingControlsStayPutWhenTitlesWrap()
+    {
+        QFETCH(QSize, size); QFETCH(double, scale);
+        QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *theme = engine.singletonInstance<QObject *>(qmlTypeId("MusicPlayer", 1, 0, "Theme")); QVERIFY(theme);
+        auto *display = theme->property("preferences").value<DisplaySettings *>(); QVERIFY(display);
+        const auto restore = qScopeGuard([display] { display->reset(); });
+        display->reset(); display->setTextScale(scale);
+        QQmlComponent component(&engine, QUrl("qrc:/components/NowPlayingPane.qml"));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QVariantMap track{{"title", "Hi"}, {"artist", "Artist"}, {"album", "Album"}, {"format", "FLAC"},
+            {"artwork", QString()}, {"artStyle", 0}, {"favorite", false}};
+        QQuickWindow window; window.resize(size);
+        QScopedPointer<QObject> object(component.createWithInitialProperties({{"width", size.width()}, {"height", size.height()}, {"track", track}}));
+        auto *pane = qobject_cast<QQuickItem *>(object.data()); QVERIFY2(pane, qPrintable(component.errorString()));
+        pane->setParentItem(window.contentItem()); window.show(); QTest::qWait(50);
+        auto *title = findItem(pane, "nowPlayingTitle");
+        auto *play = findItem(pane, "nowPlayingPlayPauseButton");
+        auto *seek = findItem(pane, "nowPlayingSeekSlider");
+        auto *scroll = findItem(pane, "nowPlayingScroll"); QVERIFY(title && play && seek && scroll);
+        QCOMPARE(title->property("lineCount").toInt(), 1);
+        // Preserve a user's scroll position too when controls overflow a small window.
+        scroll->setProperty("contentY", std::max(qreal(0), scroll->property("contentHeight").toReal() - scroll->height()));
+        QTest::qWait(30);
+        const auto playPosition = play->mapToScene(QPointF());
+        const auto seekPosition = seek->mapToScene(QPointF());
+        const auto scrollPosition = scroll->property("contentY").toReal();
+        const QString longTitle = QString("A much longer song title with enough words to wrap across the available space ").repeated(4);
+        for (const auto &text : {longTitle, QString("Hi"), longTitle}) {
+            track["title"] = text; QVERIFY(pane->setProperty("track", track)); QTest::qWait(40);
+            QCOMPARE(title->property("lineCount").toInt(), text == longTitle ? 2 : 1);
+            QVERIFY2(qAbs(play->mapToScene(QPointF()).y() - playPosition.y()) < 0.5, "Changing the title moved the playback buttons");
+            QVERIFY2(qAbs(seek->mapToScene(QPointF()).y() - seekPosition.y()) < 0.5, "Changing the title moved the seek slider");
+            QCOMPARE(scroll->property("contentY").toReal(), scrollPosition);
+        }
+        QCOMPARE(warnings.size(), 0);
     }
 
     void overviewAndItsSearchScrollWithMouseAndGestures_data()

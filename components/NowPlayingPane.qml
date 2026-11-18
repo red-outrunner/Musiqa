@@ -166,16 +166,26 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
                 Text {
+                    id: songTitle
                     objectName: "nowPlayingTitle"
                     text: root.track ? root.track.title : "Nothing playing yet"
                     Layout.fillWidth: true
+                    // Keep a two-line slot so titles never shift the controls below.
+                    Layout.preferredHeight: Math.ceil(titleFontMetrics.height) * maximumLineCount
+                    Layout.minimumHeight: Layout.preferredHeight
+                    Layout.maximumHeight: Layout.preferredHeight
                     color: Theme.text
                     font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(root.height < Theme.dp(600) ? 22 : 36)
                     font.weight: Font.DemiBold
                     font.letterSpacing: -0.8
+                    verticalAlignment: Text.AlignVCenter
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
                     elide: Text.ElideRight
+                    FontMetrics {
+                        id: titleFontMetrics
+                        font: songTitle.font
+                    }
                 }
                 IconButton {
                     objectName: "nowPlayingFavoriteButton"
