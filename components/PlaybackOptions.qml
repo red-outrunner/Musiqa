@@ -27,6 +27,8 @@ Popup {
         Text { text: "Playback transitions"; color: Theme.text; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(17); font.bold: true }
         CheckBox { objectName: "gaplessCheckBox"; text: "Gapless playback"; checked: root.player.gaplessEnabled; onToggled: root.player.gaplessEnabled = checked; palette.text: Theme.text }
         CheckBox { objectName: "crossfadeCheckBox"; text: "Enable crossfade"; checked: root.player.crossfadeEnabled; onToggled: root.player.crossfadeEnabled = checked; palette.text: Theme.text }
+        CheckBox { objectName: "crossfadeOnSkipCheckBox"; text: "Crossfade when skipping"; checked: root.player.crossfadeOnSkip; enabled: root.player.crossfadeEnabled && root.player.crossfadeSeconds > 0; onToggled: root.player.crossfadeOnSkip = checked; palette.text: Theme.text }
+        Text { text: "Also fade into the next song when you press Next. Off keeps skipping immediate."; color: Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10); wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true
             Text { text: "Fade duration"; color: Theme.secondary; Layout.fillWidth: true; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)}

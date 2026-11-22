@@ -46,6 +46,14 @@ bool makeWave(const QString &path)
     stream.writeRawData("data", 4); stream << quint32(96000); stream.writeRawData(QByteArray(96000, 0).constData(), 96000);
     return stream.status() == QDataStream::Ok;
 }
+std::shared_ptr<PcmTrack> constantPcm(const QAudioFormat &format, const QUrl &url, float value, int frames)
+{
+    auto track = std::make_shared<PcmTrack>(url, format);
+    const std::vector<float> pcm(size_t(frames) * format.channelCount(), value);
+    if (!track->append(reinterpret_cast<const char *>(pcm.data()), qint64(pcm.size() * sizeof(float)))) return {};
+    track->complete = true;
+    return track;
+}
 }
 
 class AudioFeatureTests : public QObject
@@ -62,6 +70,107 @@ private slots:
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
     }
     void init() { QSettings().clear(); }
+    void skipCrossfadeMixesImmediatelyAndFinishesBeforeTheOutgoingSongEnds()
+    {
+        QAudioFormat format; format.setSampleRate(1000); format.setChannelCount(2); format.setSampleFormat(QAudioFormat::Float);
+        auto first = constantPcm(format, QUrl::fromLocalFile("/first.wav"), 0.2f, 10000);
+        auto second = constantPcm(format, QUrl::fromLocalFile("/second.wav"), 0.4f, 10000); QVERIFY(first && second);
+        AudioMixer mixer(1000, 2); mixer.setCurrent(first, "first"); mixer.render(1000);
+        const auto originalToken = mixer.current().token;
+        QVERIFY(mixer.crossfadeTo(second, "second", 2));
+        const auto block = mixer.render(2500); QCOMPARE(block.pcm.size(), 2500 * 8);
+        const auto *pcm = reinterpret_cast<const float *>(block.pcm.constData());
+        QVERIFY(std::abs(pcm[0] - 0.2f) < 0.0001f);
+        QVERIFY(std::abs(pcm[1000 * 2] - 0.6f / std::sqrt(2.0f)) < 0.0001f);
+        QVERIFY(std::abs(pcm[2000 * 2] - 0.4f) < 0.0001f);
+        QVERIFY(!mixer.outgoing().track); QCOMPARE(mixer.current().frame, 2500);
+        bool finished = false, started = false;
+        for (const auto &event : block.events) {
+            if (event.kind == MixerEvent::Started) { QCOMPARE(event.entryId, QString("second")); QCOMPARE(event.offset, 0); started = true; }
+            if (event.kind == MixerEvent::Finished && event.entryId == "first") {
+                QCOMPARE(event.token, originalToken); QCOMPARE(event.offset, 2000); QCOMPARE(event.position, 3000); finished = true;
+            }
+            QVERIFY(event.kind != MixerEvent::QueueEnded);
+        }
+        QVERIFY(started && finished);
+    }
+    void skipCrossfadeCapsOverlapAndAcceptsBufferedTracksWithoutFullDecoding()
+    {
+        QAudioFormat format; format.setSampleRate(1000); format.setChannelCount(2); format.setSampleFormat(QAudioFormat::Float);
+        auto first = constantPcm(format, QUrl::fromLocalFile("/first.wav"), 0.2f, 100000);
+        auto second = constantPcm(format, QUrl::fromLocalFile("/second.wav"), 0.4f, 100000); QVERIFY(first && second);
+        AudioMixer mixer(1000, 2); mixer.setCurrent(first, "first");
+        for (double seconds : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN()}) {
+            QVERIFY(!mixer.crossfadeTo(second, "second", seconds)); QCOMPARE(mixer.current().entryId, QString("first"));
+        }
+        QVERIFY(mixer.crossfadeTo(second, "second", 90)); mixer.render(70001); QVERIFY(!mixer.outgoing().track);
+        auto shortTrack = constantPcm(format, QUrl::fromLocalFile("/short.wav"), 0.3f, 100); QVERIFY(shortTrack);
+        first->complete = false; second->complete = false;
+        mixer.setCurrent(first, "first", 99950);
+        QVERIFY(mixer.crossfadeTo(shortTrack, "short", 70));
+        const auto block = mixer.render(51); QVERIFY(!mixer.outgoing().track);
+        bool finished = false;
+        for (const auto &event : block.events)
+            if (event.kind == MixerEvent::Finished && event.entryId == "first") { QCOMPARE(event.offset, 50); finished = true; }
+        QVERIFY(finished);
+        mixer.setCurrent(first, "first"); QVERIFY(mixer.crossfadeTo(second, "second", 1));
+        QCOMPARE(mixer.render(1001).pcm.size(), 1001 * 8); QVERIFY(!mixer.outgoing().track);
+    }
+    void skipCrossfadeOptionPersistsAndOldBackupsKeepImmediateSkipping()
+    {
+        QVariantMap saved;
+        {
+            PlaybackEngine engine; QVERIFY(!engine.crossfadeOnSkip());
+            engine.setCrossfadeOnSkip(true); engine.setCrossfadeEnabled(true); engine.setCrossfadeSeconds(7);
+            saved = engine.exportOptions(); QVERIFY(saved.value("crossfadeOnSkip").toBool());
+        }
+        PlaybackEngine reopened; QVERIFY(reopened.crossfadeOnSkip()); QCOMPARE(reopened.crossfadeSeconds(), 7.0);
+        auto invalid = saved; invalid["crossfadeOnSkip"] = "true"; invalid["crossfadeSeconds"] = 25;
+        QVERIFY(!reopened.importOptions(invalid)); QCOMPARE(reopened.exportOptions(), saved);
+        auto legacy = saved; legacy.remove("crossfadeOnSkip");
+        QVERIFY(reopened.importOptions(legacy)); QVERIFY(!reopened.crossfadeOnSkip());
+        QVERIFY(reopened.importOptions(saved)); QVERIFY(reopened.crossfadeOnSkip());
+    }
+    void skipCrossfadeUsesAudiblePositionAndRapidSkipsKeepDistinctVoices()
+    {
+        PlaybackWorker worker;
+        const auto originalUrl = QUrl::fromLocalFile("/original.wav"), nextUrl = QUrl::fromLocalFile("/next.wav"), thirdUrl = QUrl::fromLocalFile("/third.wav");
+        const int rate = worker.m_format.sampleRate();
+        auto first = constantPcm(worker.m_format, originalUrl, 0.2f, 10 * rate);
+        auto next = constantPcm(worker.m_format, nextUrl, 0.3f, 10 * rate);
+        auto third = constantPcm(worker.m_format, thirdUrl, 0.4f, 10 * rate); QVERIFY(first && next && third);
+        worker.m_buffers.insert(originalUrl.toString(), first); worker.m_buffers.insert(nextUrl.toString(), next); worker.m_buffers.insert(thirdUrl.toString(), third);
+        worker.m_source = originalUrl; worker.m_entryId = "original"; worker.m_position = 1000; worker.m_duration = 10000;
+        worker.m_state = QMediaPlayer::PlayingState;
+        worker.m_mixer.setCurrent(first, "original", rate + rate / 5); // Generated PCM is ahead of what was heard.
+        const auto token = worker.m_mixer.current().token; worker.m_displayToken = token;
+        MixerEvent audible{MixerEvent::Progress, 0, "original", token, originalUrl, rate, 10 * rate, first};
+        worker.m_liveVoices.insert(token, audible);
+        worker.setCrossfadeEnabled(true);
+        QVERIFY(!worker.crossfadeToEntry("next", nextUrl)); // Opt in is required.
+        worker.setCrossfadeOnSkip(true); worker.setCrossfadeEnabled(false);
+        QVERIFY(!worker.crossfadeToEntry("next", nextUrl));
+        worker.setCrossfadeEnabled(true); worker.setCrossfadeSeconds(0);
+        QVERIFY(!worker.crossfadeToEntry("next", nextUrl));
+        worker.setCrossfadeSeconds(2); worker.m_state = QMediaPlayer::PausedState;
+        QVERIFY(!worker.crossfadeToEntry("next", nextUrl));
+        worker.m_state = QMediaPlayer::PlayingState;
+        QVERIFY(!worker.crossfadeToEntry("missing", QUrl::fromLocalFile("/unbuffered.wav")));
+        QVERIFY(worker.crossfadeToEntry("next", nextUrl)); worker.m_pump.stop();
+        QCOMPARE(worker.source(), nextUrl); QCOMPARE(worker.entryId(), QString("next")); QCOMPARE(worker.position(), 0);
+        QCOMPARE(worker.m_mixer.outgoing().frame, qint64(rate)); QCOMPARE(worker.m_mixer.outgoing().token, token);
+        const auto nextToken = worker.m_mixer.current().token; QVERIFY(nextToken != token);
+        QSignalSpy listening(&worker, &PlaybackWorker::listeningProgress);
+        QVERIFY(worker.crossfadeToEntry("third", thirdUrl)); worker.m_pump.stop();
+        QCOMPARE(worker.m_mixer.outgoing().entryId, QString("next")); QCOMPARE(worker.m_mixer.outgoing().token, nextToken);
+        QVERIFY(worker.m_mixer.current().token != nextToken); QCOMPARE(worker.source(), thirdUrl);
+        bool finished = false;
+        for (const auto &sample : listening)
+            if (sample[0].toString() == token && sample[5].toBool()) finished = true;
+        QVERIFY(finished);
+        worker.playEntry("original", originalUrl); worker.m_pump.stop();
+        QVERIFY(!worker.m_mixer.outgoing().track); QCOMPARE(worker.source(), originalUrl);
+    }
     void replayGainReadsExistingTagsAndPreservesTheFile()
     {
         const auto file = m_settings.filePath(QString::fromUtf8("ReplayGain été 海.wav")); QVERIFY(makeWave(file));

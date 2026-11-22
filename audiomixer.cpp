@@ -123,6 +123,20 @@ void AudioMixer::setNext(const std::shared_ptr<PcmTrack> &track, const QString &
     if (m_next.track == track && m_next.entryId == id) return;
     m_next = track ? newVoice(track, id) : Voice{};
 }
+bool AudioMixer::crossfadeTo(const std::shared_ptr<PcmTrack> &track, const QString &id, double seconds)
+{
+    if (!m_current.track || !track || !std::isfinite(seconds) || seconds <= 0
+        || !m_current.track->error.isEmpty() || !track->error.isEmpty()) return false;
+    const qint64 requested = qRound64(qMin(seconds, 70.0) * m_rate);
+    // Use buffered PCM immediately, including tracks still being decoded.
+    // Leave an incoming frame after the overlap, as with automatic fades.
+    const qint64 length = qMin(requested, qMin(m_current.track->frames() - m_current.frame, track->frames() - 1));
+    if (length <= 0) return false;
+    m_outgoing = m_current; m_current = newVoice(track, id); m_next = {};
+    m_fadeLength = length; m_fadeFrame = 0;
+    m_startPending = true; m_ended = false;
+    return true;
+}
 void AudioMixer::seek(qint64 frame) { m_current.frame = qMax<qint64>(0, frame); m_outgoing = {}; m_ended = false; }
 
 MixerEvent AudioMixer::event(MixerEvent::Kind kind, const Voice &voice, qint64 offset) const
@@ -169,7 +183,7 @@ MixerBlock AudioMixer::render(int requested)
             block.events.append(event(MixerEvent::QueueEnded, m_current, rendered)); m_ended = true; break;
         }
         int count = int(qMin<qint64>(requested - rendered, m_current.track->frames() - m_current.frame));
-        if (m_outgoing.track) count = int(qMin<qint64>(count, m_outgoing.track->frames() - m_outgoing.frame));
+        if (m_outgoing.track) count = int(qMin<qint64>(count, qMin(m_outgoing.track->frames() - m_outgoing.frame, m_fadeLength - m_fadeFrame)));
         else if (!stopAfterCurrent && crossfadeSeconds > 0 && m_next.track && m_current.track->complete && m_next.track->complete) {
             const auto plan = transitionPlan(*m_current.track, *m_next.track, crossfadeSeconds);
             if (plan.first > m_current.frame) count = int(qMin<qint64>(count, plan.first - m_current.frame));
@@ -202,7 +216,7 @@ MixerBlock AudioMixer::render(int requested)
             }
             m_outgoing.frame += count; m_fadeFrame += count;
             block.events.append(event(MixerEvent::Progress, m_outgoing, rendered + count));
-            if (m_outgoing.frame >= m_outgoing.track->frames()) { block.events.append(event(MixerEvent::Finished, m_outgoing, rendered + count)); m_outgoing = {}; }
+            if (m_fadeFrame >= m_fadeLength || m_outgoing.frame >= m_outgoing.track->frames()) { block.events.append(event(MixerEvent::Finished, m_outgoing, rendered + count)); m_outgoing = {}; }
         } else if (gainTarget == 1 && m_current.gain == 1) std::memcpy(output + rendered * m_channels, a, size_t(current.size()));
         else for (int frame = 0; frame < count; ++frame) {
             const auto gain = ramp(m_current, gainTarget);

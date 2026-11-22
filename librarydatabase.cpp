@@ -385,6 +385,17 @@ int LibraryDatabase::count(const QString &kind) const
     QSqlQuery query(m_db); query.prepare("SELECT count(*) FROM entries WHERE kind=?"); query.addBindValue(kind);
     return query.exec() && query.next() ? query.value(0).toInt() : 0;
 }
+QVariantList LibraryDatabase::artistAlbumTracks(const QString &artistId, const QString &albumId) const
+{
+    QSqlQuery query(m_db); query.setForwardOnly(true);
+    query.prepare("SELECT e.payload FROM membership a JOIN membership r ON r.songid=a.songid "
+        "JOIN entries e ON e.kind='song' AND e.id=a.songid "
+        "WHERE a.kind='album' AND a.groupid=? AND r.kind='artist' AND r.groupid=? ORDER BY e.trackrank,e.pos");
+    query.addBindValue(albumId); query.addBindValue(artistId);
+    QVariantList tracks;
+    if (query.exec()) while (query.next()) tracks.append(decoded(query.value(0)));
+    return tracks;
+}
 int LibraryDatabase::favoriteCount() const
 {
     QSqlQuery query(m_db); return query.exec("SELECT count(*) FROM entries WHERE kind='song' AND favorite=1") && query.next() ? query.value(0).toInt() : 0;
@@ -393,7 +404,7 @@ int LibraryDatabase::failedCount() const
 {
     QSqlQuery query(m_db); return query.exec("SELECT count(*) FROM entries WHERE kind='song' AND failed=1") && query.next() ? query.value(0).toInt() : 0;
 }
-bool LibraryDatabase::updateSong(const QString &url, const QVariantMap &track)
+bool LibraryDatabase::writeSong(const QString &url, const QVariantMap &track)
 {
     QSqlQuery query(m_db); query.prepare("UPDATE entries SET payload=?,plays=?,favorite=?,search=?,searchtitle=?,searchartist=?,searchalbum=?,genre=?,year=?,duration=? WHERE kind='song' AND id=?");
     query.addBindValue(encoded(track)); query.addBindValue(track.value("playCount", 0)); query.addBindValue(track.value("favorite", false));
@@ -401,7 +412,24 @@ bool LibraryDatabase::updateSong(const QString &url, const QVariantMap &track)
     query.addBindValue(folded(track.value("artist").toString())); query.addBindValue(folded(track.value("album").toString()));
     query.addBindValue(CollectionRules::folded(track.value("genre").toString().trimmed())); query.addBindValue(CollectionRules::releaseYear(track));
     query.addBindValue(qMax<qint64>(0, track.value("duration").toLongLong())); query.addBindValue(url);
-    if (!query.exec()) return false;
+    if (!query.exec()) { m_error = query.lastError().text(); return false; }
+    if (query.numRowsAffected() != 1) { m_error = tr("The song is no longer in the library."); return false; }
+    return true;
+}
+bool LibraryDatabase::updateSong(const QString &url, const QVariantMap &track)
+{
+    if (!writeSong(url, track)) return false;
+    emit changed("song"); return true;
+}
+bool LibraryDatabase::updateSongs(const QVariantList &tracks)
+{
+    if (tracks.isEmpty()) return true;
+    if (!valid() || !m_db.transaction()) { m_error = m_db.lastError().text(); return false; }
+    for (const auto &entry : tracks) {
+        const auto track = entry.toMap();
+        if (!writeSong(track.value("fileUrl").toString(), track)) { m_db.rollback(); return false; }
+    }
+    if (!m_db.commit()) { m_error = m_db.lastError().text(); m_db.rollback(); return false; }
     emit changed("song"); return true;
 }
 QVariantMap LibraryDatabase::playCounts() const

@@ -30,12 +30,14 @@ public:
     bool crossfading() const { return m_liveVoices.size() > 1; }
     void setGaplessEnabled(bool value);
     void setCrossfadeEnabled(bool value);
+    void setCrossfadeOnSkip(bool value);
     void setCrossfadeSeconds(double value);
     qint64 sleepRemainingMs() const;
     bool sleepAfterTrack() const { return m_sleepAfterTrack; }
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
     Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    bool crossfadeToEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
     Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &info = {});
     Q_INVOKABLE void updateTrackInfo(const QUrl &url, const QVariantMap &info);
     Q_INVOKABLE void play();
@@ -113,7 +115,7 @@ private:
     qint64 m_audioOrigin = 0, m_pausedAt = 0;
     qint64 m_sleepLength = 0;
     bool m_sleepAfterTrack = false;
-    bool m_gapless = true, m_crossfade = false;
+    bool m_gapless = true, m_crossfade = false, m_crossfadeOnSkip = false;
     double m_crossfadeSeconds = 5;
     QString m_replayGainMode = QStringLiteral("off");
     float m_volume = 1;

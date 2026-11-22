@@ -34,13 +34,7 @@ QVariantList TrackListModel::artistAlbumTracks(const QString &artistId, const QS
 {
     if (artistId.isEmpty() || albumId.isEmpty()) return {};
     if (m_database->valid()) {
-        LibraryQuery filter; filter.collectionKind = "artist"; filter.collectionId = artistId;
-        const auto artistUrls = m_database->ids("song", filter);
-        const QSet<QString> members(artistUrls.cbegin(), artistUrls.cend());
-        filter.collectionKind = "album"; filter.collectionId = albumId; filter.sort = "track";
-        auto urls = m_database->ids("song", filter);
-        urls.removeIf([&](const QString &url) { return !members.contains(url); });
-        return m_database->page("song", urls, 0, urls.size());
+        return m_database->artistAlbumTracks(artistId, albumId);
     }
     auto tracks = tracksForGroup("artist", artistId);
     tracks.removeIf([&](const QVariant &entry) { return entry.toMap().value("albumId").toString() != albumId; });

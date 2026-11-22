@@ -61,6 +61,7 @@ ApplicationWindow {
     property string searchCategory: "song"
     property var searchReturnScroll: null
     property real pendingSearchOffset: -1
+    property real pendingArtistOffset: -1
     property int artworkSize: 220
     property int sidebarSize: 222
     property bool sidebarCollapsed: false
@@ -174,6 +175,7 @@ ApplicationWindow {
     }
 
     function openExternalFiles(urls, append) { library.openFiles(urls, !!append); }
+    function commitSearch() { searchDelay.stop(); appliedSearchQuery = searchQuery.trim(); }
     function isPinned(kind, id) { const pins = library.pinnedCollections; return library.collectionPinned(kind, id); }
     function togglePin(kind, id, name) {
         const pinned = !isPinned(kind, id);
@@ -305,6 +307,7 @@ ApplicationWindow {
         const revision = ++navigationRevision;
         const saved = positions || {};
         pendingSearchOffset = saved.results || 0;
+        pendingArtistOffset = saved.artistAlbums || 0;
         if (searchQuery.trim()) searchReturnScroll = saved;
         Qt.callLater(function() {
             if (revision !== win.navigationRevision) return;
@@ -316,7 +319,9 @@ ApplicationWindow {
                 view.contentY = view.originY + Math.max(0, Math.min(maximum, pair[1]));
             }
             songList.contentX = songList.originX + Math.max(0, Math.min(songList.contentWidth - songList.width, saved.songsX || 0));
-            if (artistAlbumsLoader.item) artistAlbumsLoader.item.scrollPosition = saved.artistAlbums || 0;
+            if (artistAlbumsLoader.item && win.pendingArtistOffset >= 0) {
+                artistAlbumsLoader.item.restoreScroll(win.pendingArtistOffset); win.pendingArtistOffset = -1;
+            }
         });
     }
     function visitPage(page, group) {
@@ -514,7 +519,7 @@ ApplicationWindow {
             fileUrl: url
         };
     }
-    function playQueueItem(id) {
+    function playQueueItem(id, crossfadeOnSkip) {
         const entry = queueItems.find(item => item.id === id);
         if (!entry)
             return;
@@ -523,11 +528,14 @@ ApplicationWindow {
             showToast("This song is no longer in your library.");
             return;
         }
+        const blended = crossfadeOnSkip === true && player.crossfadeOnSkip && player.crossfadeEnabled
+                        && player.crossfadeSeconds > 0 && player.crossfadeToEntry(id, entry.fileUrl, track);
         currentQueueId = id;
         restorePosition = -1;
         selectedTrack = track;
         currentUrl = entry.fileUrl;
-        player.playEntry(id, entry.fileUrl, track);
+        if (!blended)
+            player.playEntry(id, entry.fileUrl, track);
         prepareTimer.restart();
     }
     function playTrack(track, tracks) {
@@ -618,9 +626,10 @@ ApplicationWindow {
         } else if (action === "playlist") {
             playlistDialog.track = null; playlistDialog.tracks = tracks; playlistDialog.open();
         } else if (action === "favorite" || action === "unfavorite") {
-            library.setTracksFavorite(urls, action === "favorite");
-            deselectSongs(urls);
-            showToast(action === "favorite" ? "Added to favorites." : "Removed from favorites.");
+            if (library.setTracksFavorite(urls, action === "favorite")) {
+                deselectSongs(urls);
+                showToast(action === "favorite" ? "Added to favorites." : "Removed from favorites.");
+            }
         } else if (action === "metadata") batchMetadataEditor.begin(tracks);
         else if (action === "trash") { trashDialog.track = null; trashDialog.tracks = tracks; trashDialog.open(); }
         else if (action === "removePlaylist" && library.removeTracksFromPlaylist(collectionId, urls)) deselectSongs(urls);
@@ -793,7 +802,7 @@ ApplicationWindow {
                 return;
             index = 0;
         }
-        playQueueItem(queueItems[index].id);
+        playQueueItem(queueItems[index].id, !automatic);
     }
     function previousTrack() {
         if (player.position > 3000) {
@@ -3056,6 +3065,9 @@ ApplicationWindow {
         anchors.fill: contentScroll
         active: win.collectionKind === "artist" && !!win.collectionName && win.artistAlbumView && !win.restoringNavigation
         visible: active && !win.searching
+        onLoaded: if (win.pendingArtistOffset >= 0) {
+            item.restoreScroll(win.pendingArtistOffset); win.pendingArtistOffset = -1;
+        }
         sourceComponent: ArtistAlbumsPane { objectName: "artistAlbumsPane"; controller: win }
     }
     }

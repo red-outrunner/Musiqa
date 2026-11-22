@@ -27,6 +27,51 @@ class LibraryUsabilityTests : public QObject
         settings.setValue("library/snapshot", fixtureTracks(root)); settings.sync();
     }
 private slots:
+    void cachedRootFolderRetainsItsSongsWithoutScanning()
+    {
+        QTemporaryDir temp; QVERIFY(temp.isValid());
+        const auto file = temp.filePath("library.ini");
+        const auto root = QDir::cleanPath(QDir::rootPath());
+        const auto track = fixtureTracks(QDir(root).filePath("unopened-musica-cache"))[0].toMap();
+        QSettings settings(file, QSettings::IniFormat);
+        settings.setValue("library/folders", QStringList{root});
+        settings.setValue("library/metadata", QVariantMap{{track.value("fileUrl").toString(), track}}); settings.sync();
+        TrackListModel library(file, false);
+        QCOMPARE(library.trackCount(), 1); QVERIFY(!library.scanning());
+        QCOMPARE(library.trackForUrl(track.value("fileUrl").toString()).value("title"), track.value("title"));
+    }
+
+    void bulkFavoritesPublishOneUpdateAndKeepTheLibraryPaged()
+    {
+        QTemporaryDir temp; const auto file = temp.filePath("library.ini"); seed(file);
+        { TrackListModel migrate(file, false); }
+        TrackListModel library(file, false); QStringList urls;
+        for (const auto &entry : fixtureTracks()) urls.append(entry.toMap().value("fileUrl").toString());
+        for (const auto &url : urls) QVERIFY(!library.trackForUrl(url).value("favorite").toBool());
+        QSignalSpy refreshed(library.songs(), &LibraryViewModel::entriesChanged);
+        library.setTracksFavorite(urls, true);
+        QCOMPARE(library.favoriteCount(), 3);
+        QCOMPARE(refreshed.size(), 1);
+        for (const auto &url : urls) QVERIFY(library.trackForUrl(url).value("favorite").toBool());
+        QCOMPARE(library.residentTrackCount(), 0); QVERIFY(!library.scanning());
+        library.setTracksFavorite(urls, false); QCOMPARE(library.favoriteCount(), 0);
+    }
+
+    void batchSongWritesRollBackBeforePublishingAnyChanges()
+    {
+        QTemporaryDir temp; QVERIFY(temp.isValid());
+        LibraryDatabase database(temp.filePath("library.sqlite")); QVERIFY(database.valid());
+        const auto tracks = fixtureTracks(); QVERIFY(database.replace(tracks, {}, {}, {}));
+        const auto url = tracks[0].toMap().value("fileUrl").toString();
+        auto changed = tracks[0].toMap(); changed["favorite"] = true;
+        auto missing = changed; missing["fileUrl"] = "file:///not-in-the-library.flac";
+        QSignalSpy published(&database, &LibraryDatabase::changed);
+        QVERIFY(!database.updateSongs({changed, missing}));
+        QVERIFY(!database.entry("song", url).value("favorite").toBool()); QCOMPARE(published.size(), 0);
+        QVERIFY(database.updateSongs({changed}));
+        QVERIFY(database.entry("song", url).value("favorite").toBool()); QCOMPARE(published.size(), 1);
+    }
+
     void collectionViewsSearchGloballyAndFindAnArtistsAlbumsWithoutScanning()
     {
         QTemporaryDir temp; const auto file = temp.filePath("library.ini"); seed(file);

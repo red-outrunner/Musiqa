@@ -1,4 +1,5 @@
 #include "tracklibrary.h"
+#include "collectionfeatures.h"
 #include "genregrouping.h"
 #include "albumgrouping.h"
 #include "filetags.h"
@@ -69,7 +70,7 @@ QVariantList scanFiles(const QStringList &folders, const QStringList &files,
     for (const QString &folder : roots) {
         bool covered = false;
         for (const auto &root : scannedRoots)
-            covered |= folder == root || folder.startsWith(root + QDir::separator());
+            covered |= CollectionRules::inFolder(folder, root);
         if (covered) continue;
         scannedRoots.append(folder);
         QDirIterator it(folder, QDir::Files | QDir::Readable | QDir::NoSymLinks,
@@ -337,7 +338,7 @@ void TrackListModel::initialize(bool autoScan)
             const QString path = QUrl(it.key()).toLocalFile();
             bool included = m_files.contains(path);
             for (const auto &folder : m_folders)
-                included |= path.startsWith(QDir::cleanPath(folder) + QDir::separator());
+                included |= CollectionRules::inFolder(path, folder);
             if (included) m_tracks.append(it.value());
         }
     }
@@ -527,15 +528,34 @@ int TrackListModel::addTracksToPlaylist(const QString &id, const QStringList &ur
     return 0;
 }
 
-void TrackListModel::setTracksFavorite(const QStringList &urls, bool favorite)
+bool TrackListModel::setTracksFavorite(const QStringList &urls, bool favorite)
 {
     if (!m_workingSetLoaded && m_database->valid()) {
-        for (const auto &url : urls) {
-            auto track = trackForUrl(url); if (track.isEmpty()) continue;
-            track["favorite"] = favorite; m_favorites.removeAll(url); if (favorite) m_favorites.append(url);
-            m_database->updateSong(url, track);
+        QStringList unique; QSet<QString> seen;
+        for (const auto &input : urls) {
+            const auto url = QUrl(input).toString();
+            if (!seen.contains(url)) { unique.append(url); seen.insert(url); }
         }
-        m_settings.setValue("library/favorites", m_favorites); emit tracksChanged(); return;
+        QVariantList updates; QStringList valid;
+        for (const auto &entry : m_database->page("song", unique, 0, unique.size())) {
+            auto track = entry.toMap(); if (track.isEmpty()) continue;
+            valid.append(track.value("fileUrl").toString());
+            if (track.value("favorite").toBool() == favorite) continue;
+            track["favorite"] = favorite; updates.append(track);
+        }
+        if (!m_database->updateSongs(updates)) {
+            emit importError(tr("Couldn't update favorites: %1").arg(m_database->error())); return false;
+        }
+        const QSet<QString> affected(valid.cbegin(), valid.cend());
+        auto next = m_favorites;
+        if (favorite) {
+            const QSet<QString> existing(next.cbegin(), next.cend());
+            for (const auto &url : valid) if (!existing.contains(url)) next.append(url);
+        } else next.removeIf([&](const QString &url) { return affected.contains(url); });
+        const bool changed = next != m_favorites || !updates.isEmpty();
+        m_favorites = next;
+        if (changed) { m_settings.setValue("library/favorites", m_favorites); emit tracksChanged(); }
+        return !valid.isEmpty() || urls.isEmpty();
     }
     for (const auto &url : urls) {
         const int row = m_trackRows.value(url, -1);
@@ -545,6 +565,7 @@ void TrackListModel::setTracksFavorite(const QStringList &urls, bool favorite)
         if (favorite) m_favorites.append(url);
     }
     publishUpdates(); saveSettings();
+    return true;
 }
 
 bool TrackListModel::removeFromPlaylist(const QString &id, const QString &fileUrl)

@@ -21,7 +21,14 @@ Item {
     Binding { target: root.genres; property: "search"; value: root.controller.appliedSearchQuery }
     function resetScroll() { results.positionViewAtBeginning(); }
     function restoreScroll(offset) { results.forceLayout(); results.contentY = Math.max(results.originY, Math.min(results.originY + results.contentHeight - results.height, offset)); }
-    function playFirst() { if (controller.searchCategory === "song" && songs.count) controller.playTrack(songs.get(0), songs.entries()); }
+    function playFirst() {
+        const query = controller.searchQuery.trim();
+        if (controller.searchCategory !== "song" || !query) return;
+        // Enter can arrive before the typing debounce; never play old results.
+        songs.search = query; songs.filters = controller.songFilters; songs.sortKey = controller.sortBy;
+        controller.commitSearch(); resetScroll();
+        if (songs.count) controller.playTrack(songs.get(0), songs.entries());
+    }
     ColumnLayout {
         anchors.fill: parent
         spacing: Theme.gap(14)

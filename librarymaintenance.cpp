@@ -1,6 +1,7 @@
 #include "librarymaintenance.h"
 #include "tracklibrary.h"
 #include "albumgrouping.h"
+#include "collectionfeatures.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -23,7 +24,7 @@ QString localPath(const QUrl &url)
 }
 bool inside(const QString &path, const QString &folder)
 {
-    return path == folder || path.startsWith(folder.endsWith(QDir::separator()) ? folder : folder + QDir::separator());
+    return CollectionRules::inFolder(path, folder);
 }
 QVariant remapValue(const QVariant &value, const QVariantMap &mapping)
 {

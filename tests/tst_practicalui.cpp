@@ -186,6 +186,71 @@ private slots:
         TrackListModel restored(QSettings().fileName(), false); QVERIFY(restored.collectionPinned("album", pinnedAlbum)); QCOMPARE(restored.pinnedCollections().size(), 1);
     }
 
+    void pressingEnterSearchesTheNewestTextBeforePlaying()
+    {
+        QVERIFY(seedLibrary()); QQmlApplicationEngine engine;
+        auto *window = loadWindow(engine); QVERIFY(window);
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(player); player->audioOutput()->setMuted(true);
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
+        auto *search = window->findChild<QQuickItem *>("searchField"); QVERIFY(search);
+        search->setProperty("text", "First");
+        QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("First"));
+        const auto secondUrl = QUrl::fromLocalFile(QDir(m_musicRoot).filePath("Other/Second.wav")).toString();
+        // Submit while the previous query's results are still displayed.
+        search->setProperty("text", "Second"); search->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Return);
+        QCOMPARE(window->property("currentUrl").toString(), secondUrl);
+        QCOMPARE(values(window, "queueUrls"), QVariantList{secondUrl});
+        search->setProperty("text", "No song matches this query"); QTest::keyClick(window, Qt::Key_Return);
+        QCOMPARE(window->property("currentUrl").toString(), secondUrl);
+        QCOMPARE(values(window, "queueUrls"), QVariantList{secondUrl}); player->stop();
+    }
+
+    void updatingArtistFavoritesKeepsExistingRows()
+    {
+        QVERIFY(seedLibrary());
+        QSettings settings; auto tracks = settings.value("library/snapshot").toList();
+        const auto initial = tracks.first().toMap();
+        for (int index = 0; index < 60; ++index) {
+            auto extra = initial;
+            extra["fileUrl"] = QUrl::fromLocalFile(QDir(m_musicRoot).filePath(QString("Extra %1/Song.wav").arg(index))).toString();
+            extra["album"] = QString("ZZZ Album %1").arg(index); extra["favorite"] = false;
+            AlbumGrouping::updateIdentity(extra); tracks.append(extra);
+        }
+        settings.setValue("library/snapshot", tracks); settings.sync();
+        QQmlApplicationEngine engine;
+        auto *window = loadWindow(engine); QVERIFY(window);
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        QTRY_VERIFY(window->property("sessionRestored").toBool()); window->resize(1200, 850);
+        QVERIFY(click(window, "navArtists")); QTRY_VERIFY(findItem(window->contentItem(), "groupCard0"));
+        QVERIFY(click(window, "groupCard0")); QTRY_VERIFY(findItem(window->contentItem(), "artistAlbumHeader0"));
+        QVERIFY(click(window, "artistAlbumHeader0")); QTRY_VERIFY(findItem(window->contentItem(), "artistAlbumSong1"));
+        auto *list = findItem(window->contentItem(), "artistAlbumList"); QVERIFY(list);
+        auto *model = qobject_cast<QAbstractItemModel *>(list->property("model").value<QObject *>()); QVERIFY(model);
+        QSignalSpy removed(model, &QAbstractItemModel::rowsRemoved), reset(model, &QAbstractItemModel::modelReset);
+        const auto url = QUrl::fromLocalFile(QDir(m_musicRoot).filePath("Artist/Album/First.wav")).toString();
+        library->toggleFavorite(url); QTest::qWait(100);
+        QCOMPARE(removed.size(), 0); QCOMPARE(reset.size(), 0);
+        auto *row = findItem(window->contentItem(), "artistAlbumSong1"); QVERIFY(row);
+        const auto value = row->property("track");
+        const auto track = value.metaType() == QMetaType::fromType<QJSValue>() ? value.value<QJSValue>().toVariant().toMap() : value.toMap();
+        QVERIFY(!track.value("favorite").toBool());
+        QVERIFY(list->property("contentHeight").toReal() > 1600);
+        list->setProperty("contentY", list->property("originY").toReal() + 1000); QTest::qWait(30);
+        auto *pane = window->findChild<QObject *>("artistAlbumsPane"); QVERIFY(pane);
+        const auto offset = pane->property("scrollPosition").toReal();
+        library->toggleFavorite(url); QTest::qWait(100);
+        QVERIFY(qAbs(pane->property("scrollPosition").toReal() - offset) < 2);
+        QVERIFY(click(window, "navSongs")); QVERIFY(QMetaObject::invokeMethod(window, "goBack"));
+        QTRY_VERIFY(findItem(window->contentItem(), "artistAlbumList"));
+        list = findItem(window->contentItem(), "artistAlbumList");
+        pane = window->findChild<QObject *>("artistAlbumsPane"); QVERIFY(pane);
+        QTRY_VERIFY2(qAbs(pane->property("scrollPosition").toReal() - offset) < 2,
+            qPrintable(QString("Restored artist offset %1, expected %2; pending %3")
+                .arg(pane->property("scrollPosition").toReal()).arg(offset).arg(window->property("pendingArtistOffset").toReal())));
+    }
+
     void practicalLayoutSearchArtistAlbumsAndQueueTabsWorkTogether()
     {
         QVERIFY(seedLibrary());

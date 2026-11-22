@@ -25,6 +25,7 @@ class PlaybackEngine : public QObject
     Q_PROPERTY(QAudioOutput *audioOutput READ audioOutput CONSTANT)
     Q_PROPERTY(bool gaplessEnabled READ gaplessEnabled WRITE setGaplessEnabled NOTIFY optionsChanged)
     Q_PROPERTY(bool crossfadeEnabled READ crossfadeEnabled WRITE setCrossfadeEnabled NOTIFY optionsChanged)
+    Q_PROPERTY(bool crossfadeOnSkip READ crossfadeOnSkip WRITE setCrossfadeOnSkip NOTIFY optionsChanged)
     Q_PROPERTY(double crossfadeSeconds READ crossfadeSeconds WRITE setCrossfadeSeconds NOTIFY optionsChanged)
     Q_PROPERTY(bool crossfading READ crossfading NOTIFY transitionChanged)
     Q_PROPERTY(qint64 sleepRemainingMs READ sleepRemainingMs NOTIFY sleepChanged)
@@ -53,10 +54,12 @@ public:
     QAudioOutput *audioOutput() { return &m_controls; }
     bool gaplessEnabled() const { return m_snapshot.gapless; }
     bool crossfadeEnabled() const { return m_snapshot.crossfade; }
+    bool crossfadeOnSkip() const { return m_snapshot.crossfadeOnSkip; }
     double crossfadeSeconds() const { return m_snapshot.crossfadeSeconds; }
     bool crossfading() const { return m_snapshot.crossfading; }
     void setGaplessEnabled(bool value);
     void setCrossfadeEnabled(bool value);
+    void setCrossfadeOnSkip(bool value);
     void setCrossfadeSeconds(double value);
     qint64 sleepRemainingMs() const;
     bool sleepAfterTrack() const { return m_snapshot.sleepAfterTrack; }
@@ -81,6 +84,7 @@ public:
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
     Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
+    Q_INVOKABLE bool crossfadeToEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
     Q_INVOKABLE void prepareNext(const QString &id, const QUrl &url, const QVariantMap &info = {});
     Q_INVOKABLE void updateTrackInfo(const QUrl &url, const QVariantMap &info);
     Q_INVOKABLE void play();

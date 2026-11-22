@@ -59,6 +59,7 @@ PlaybackSnapshot PlaybackWorker::snapshot()
     result.source = m_source; result.entryId = m_entryId; result.position = m_position; result.duration = m_duration;
     result.state = m_state; result.status = m_status;
     result.gapless = m_gapless; result.crossfade = m_crossfade; result.crossfadeSeconds = m_crossfadeSeconds;
+    result.crossfadeOnSkip = m_crossfadeOnSkip;
     result.crossfading = crossfading();
     result.sleepRemainingMs = sleepRemainingMs(); result.sleepAfterTrack = m_sleepAfterTrack;
     result.equalizerEnabled = m_equalizer.enabled(); result.equalizerPreset = m_equalizer.preset();
@@ -183,6 +184,7 @@ void PlaybackWorker::setReplayGainMode(const QString &mode)
 }
 void PlaybackWorker::setGaplessEnabled(bool value) { if (m_gapless == value) return; m_gapless = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setCrossfadeEnabled(bool value) { if (m_crossfade == value) return; m_crossfade = value; configureMixer(); emit optionsChanged(); }
+void PlaybackWorker::setCrossfadeOnSkip(bool value) { if (m_crossfadeOnSkip == value) return; m_crossfadeOnSkip = value; emit optionsChanged(); }
 void PlaybackWorker::setCrossfadeSeconds(double value) { if (!std::isfinite(value)) return; value = qBound(0.0, value, 70.0); if (qFuzzyCompare(value, m_crossfadeSeconds)) return; m_crossfadeSeconds = value; configureMixer(); emit optionsChanged(); }
 void PlaybackWorker::setEntryId(const QString &id) { if (id == m_entryId) return; m_entryId = id; emit entryIdChanged(); }
 void PlaybackWorker::setState(QMediaPlayer::PlaybackState state) { if (state == m_state) return; m_state = state; emit playbackStateChanged(); }
@@ -245,6 +247,47 @@ void PlaybackWorker::playEntry(const QString &id, const QUrl &url, const QVarian
     setEntryId(id); load(url, true);
     if (auto buffer = m_buffers.value(url.toString()).lock()) { buffer->setInfo(info); loaded(buffer); }
     play();
+}
+bool PlaybackWorker::crossfadeToEntry(const QString &id, const QUrl &url, const QVariantMap &info)
+{
+    if (!m_crossfadeOnSkip || !m_crossfade || m_crossfadeSeconds <= 0
+        || m_state != QMediaPlayer::PlayingState || id.isEmpty() || url.isEmpty()) return false;
+    deliverEvents();
+    auto active = m_buffers.value(m_source.toString()).lock();
+    auto incoming = m_buffers.value(url.toString()).lock();
+    const auto frame = m_position * m_format.sampleRate() / 1000;
+    // Next is normally prebuffered. If it isn't ready, let the caller perform
+    // the normal immediate skip rather than delaying the user's command.
+    if (!active || !incoming || !active->error.isEmpty() || !incoming->error.isEmpty()
+        || active->frames() <= frame || incoming->frames() <= 1) return false;
+    incoming->setInfo(info);
+    QString token;
+    const auto displayed = m_liveVoices.constFind(m_displayToken);
+    if (displayed != m_liveVoices.cend() && displayed->url == m_source && displayed->entryId == m_entryId)
+        token = m_displayToken;
+    else if (m_mixer.current().track == active && m_mixer.current().entryId == m_entryId)
+        token = m_mixer.current().token;
+    auto mixer = m_mixer;
+    mixer.setCurrent(active, m_entryId, frame, token);
+    if (!mixer.crossfadeTo(incoming, id, m_crossfadeSeconds)) return false;
+    ++m_generation;
+    m_pump.stop(); sendListening(false);
+    // Rewind rendered-ahead PCM to the audible position before replacing the
+    // sink. Retain the listening token so the outgoing song isn't counted twice.
+    resetOutput();
+    m_mixer = std::move(mixer);
+    for (auto it = m_liveVoices.begin(); it != m_liveVoices.end();) {
+        if (it.key() != token) {
+            emit listeningProgress(it->token, it->url, it->position * 1000 / m_format.sampleRate(), it->duration * 1000 / m_format.sampleRate(), false, true, m_clock.elapsed());
+            it = m_liveVoices.erase(it);
+        } else ++it;
+    }
+    m_source = url; m_entryId = id; m_position = 0;
+    m_duration = incoming->durationFrames() * 1000 / m_format.sampleRate();
+    setStatus(QMediaPlayer::LoadedMedia);
+    emit sourceChanged(); emit entryIdChanged(); emit positionChanged(); emit durationChanged(); emit seekableChanged(); emit transitionChanged();
+    sendListening(true); m_pump.start();
+    return true;
 }
 void PlaybackWorker::prepareNext(const QString &id, const QUrl &url, const QVariantMap &info)
 {

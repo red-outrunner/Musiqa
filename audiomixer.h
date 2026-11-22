@@ -72,6 +72,7 @@ public:
     explicit AudioMixer(int sampleRate = 48000, int channels = 2);
     void setCurrent(const std::shared_ptr<PcmTrack> &track, const QString &entryId, qint64 frame = 0, const QString &token = {});
     void setNext(const std::shared_ptr<PcmTrack> &track, const QString &entryId);
+    bool crossfadeTo(const std::shared_ptr<PcmTrack> &track, const QString &entryId, double seconds);
     void seek(qint64 frame);
     void clear();
     MixerBlock render(int frames);

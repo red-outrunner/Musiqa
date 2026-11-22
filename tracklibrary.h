@@ -115,7 +115,7 @@ public:
     Q_INVOKABLE QString createPlaylistFromUrls(const QString &name, const QStringList &urls);
     Q_INVOKABLE bool addToPlaylist(const QString &id, const QString &fileUrl);
     Q_INVOKABLE int addTracksToPlaylist(const QString &id, const QStringList &urls);
-    Q_INVOKABLE void setTracksFavorite(const QStringList &urls, bool favorite);
+    Q_INVOKABLE bool setTracksFavorite(const QStringList &urls, bool favorite);
     Q_INVOKABLE bool removeFromPlaylist(const QString &id, const QString &fileUrl);
     Q_INVOKABLE int removeTracksFromPlaylist(const QString &id, const QStringList &urls);
     Q_INVOKABLE bool deletePlaylist(const QString &id);

@@ -91,6 +91,7 @@ PlaybackEngine::PlaybackEngine(QObject *parent) : QObject(parent), m_controls(th
     m_audioThread.start(QThread::HighPriority);
     const bool gapless = m_settings.value("playback/gapless", true).toBool();
     const bool crossfade = m_settings.value("playback/crossfade", false).toBool();
+    const bool crossfadeOnSkip = m_settings.value("playback/crossfadeOnSkip", false).toBool();
     const double seconds = m_settings.value("playback/fadeSeconds", 5).toDouble();
     const bool equalizer = m_settings.value("playback/equalizerEnabled", false).toBool();
     const QString preset = m_settings.value("playback/equalizerPreset", QStringLiteral("bass")).toString();
@@ -103,9 +104,10 @@ PlaybackEngine::PlaybackEngine(QObject *parent) : QObject(parent), m_controls(th
     m_outputDeviceId = m_settings.value("playback/outputDeviceId").toString();
     if (!validDeviceKey(m_outputDeviceId)) m_outputDeviceId.clear();
     m_settings.remove("playback/quantize");
-    dispatch([this, gapless, crossfade, seconds, equalizer, preset, count, custom, outputMode, replayGainMode] {
+    dispatch([this, gapless, crossfade, crossfadeOnSkip, seconds, equalizer, preset, count, custom, outputMode, replayGainMode] {
         m_worker->setGaplessEnabled(gapless);
         m_worker->setCrossfadeEnabled(crossfade);
+        m_worker->setCrossfadeOnSkip(crossfadeOnSkip);
         m_worker->setCrossfadeSeconds(seconds);
         m_worker->setEqualizerBandCount(count); m_worker->setEqualizerCustomGains(custom);
         m_worker->setEqualizerPreset(preset);
@@ -154,7 +156,7 @@ void PlaybackEngine::applySnapshot(const PlaybackSnapshot &state)
     if (old.position != state.position) emit positionChanged();
     if (old.state != state.state) emit playbackStateChanged();
     if (old.status != state.status) emit mediaStatusChanged();
-    if (old.gapless != state.gapless || old.crossfade != state.crossfade
+    if (old.gapless != state.gapless || old.crossfade != state.crossfade || old.crossfadeOnSkip != state.crossfadeOnSkip
         || old.crossfadeSeconds != state.crossfadeSeconds) emit optionsChanged();
     if (old.crossfading != state.crossfading) emit transitionChanged();
     if (old.sleepRevision != state.sleepRevision) emit sleepChanged();
@@ -197,6 +199,11 @@ void PlaybackEngine::setCrossfadeSeconds(double value)
 {
     dispatch([this, value] { m_worker->setCrossfadeSeconds(value); });
     m_settings.setValue("playback/fadeSeconds", m_snapshot.crossfadeSeconds);
+}
+void PlaybackEngine::setCrossfadeOnSkip(bool value)
+{
+    dispatch([this, value] { m_worker->setCrossfadeOnSkip(value); });
+    m_settings.setValue("playback/crossfadeOnSkip", m_snapshot.crossfadeOnSkip);
 }
 void PlaybackEngine::setEntryId(const QString &id) { dispatch([this, id] { m_worker->setEntryId(id); }); }
 QObject *PlaybackEngine::lyrics() const { return m_lyrics; }
@@ -270,7 +277,7 @@ void PlaybackEngine::updateOutputDevice()
 }
 QVariantMap PlaybackEngine::exportOptions() const
 {
-    return {{"gapless", gaplessEnabled()}, {"crossfade", crossfadeEnabled()},
+    return {{"gapless", gaplessEnabled()}, {"crossfade", crossfadeEnabled()}, {"crossfadeOnSkip", crossfadeOnSkip()},
         {"crossfadeSeconds", crossfadeSeconds()}, {"equalizerEnabled", equalizerEnabled()}, {"equalizerPreset", equalizerPreset()},
         {"equalizerBandCount", equalizerBandCount()}, {"equalizerCustomGains", curveValues(m_snapshot.equalizerCustomGains)},
         {"outputMode", outputMode()}, {"outputDeviceId", m_outputDeviceId}, {"replayGainMode", replayGainMode()}};
@@ -288,6 +295,7 @@ bool PlaybackEngine::importOptions(const QVariantMap &options)
     for (const auto &key : required) if (!options.contains(key)) return false;
     for (const auto &key : {QStringLiteral("gapless"), QStringLiteral("crossfade"), QStringLiteral("equalizerEnabled")})
         if (options.value(key).metaType().id() != QMetaType::Bool) return false;
+    if (options.contains("crossfadeOnSkip") && options.value("crossfadeOnSkip").metaType().id() != QMetaType::Bool) return false;
     for (const auto &key : {QStringLiteral("equalizerPreset"), QStringLiteral("outputMode"), QStringLiteral("outputDeviceId")})
         if (options.contains(key) && options.value(key).metaType().id() != QMetaType::QString) return false;
     bool valid = false; const double seconds = options.value("crossfadeSeconds").toDouble(&valid);
@@ -308,6 +316,7 @@ bool PlaybackEngine::importOptions(const QVariantMap &options)
     if ((mode != QLatin1String("stereo") && mode != QLatin1String("mono")) || !validDeviceKey(deviceId)) return false;
     setGaplessEnabled(options.value("gapless").toBool());
     setCrossfadeSeconds(seconds); setCrossfadeEnabled(options.value("crossfade").toBool());
+    setCrossfadeOnSkip(options.value("crossfadeOnSkip", false).toBool());
     dispatch([this, count, custom, preset] {
         m_worker->setEqualizerBandCount(count); m_worker->setEqualizerCustomGains(custom); m_worker->setEqualizerPreset(preset);
     }); saveEqualizerOptions(); setEqualizerEnabled(options.value("equalizerEnabled").toBool());
@@ -320,6 +329,12 @@ void PlaybackEngine::setPosition(qint64 position) { dispatch([this, position] { 
 void PlaybackEngine::playEntry(const QString &id, const QUrl &url, const QVariantMap &info)
 {
     dispatch([this, id, url, info] { m_worker->playEntry(id, url, info); });
+}
+bool PlaybackEngine::crossfadeToEntry(const QString &id, const QUrl &url, const QVariantMap &info)
+{
+    bool started = false;
+    dispatch([this, id, url, info, &started] { started = m_worker->crossfadeToEntry(id, url, info); });
+    return started;
 }
 void PlaybackEngine::prepareNext(const QString &id, const QUrl &url, const QVariantMap &info)
 {

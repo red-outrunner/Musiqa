@@ -29,6 +29,7 @@ public:
     QVariantMap entry(const QString &kind, const QString &id) const;
     QVariantList page(const QString &kind, const QStringList &ids, int first, int length) const;
     QVariantList all(const QString &kind) const;
+    QVariantList artistAlbumTracks(const QString &artistId, const QString &albumId) const;
     int count(const QString &kind) const;
     int favoriteCount() const;
     int failedCount() const;
@@ -39,11 +40,13 @@ public:
     QVariantMap folderSummary(const QString &path) const;
     QVariantList folderChildren(const QString &path) const;
     bool updateSong(const QString &url, const QVariantMap &track);
+    bool updateSongs(const QVariantList &tracks);
     QVariant value(const QString &key) const;
     void setValue(const QString &key, const QVariant &value);
 signals:
     void changed(const QString &kind);
 private:
+    bool writeSong(const QString &url, const QVariantMap &track);
     bool writeRows(const QString &kind, const QVariantList &rows, const QString &key);
     bool migrateCollectionSorting();
     bool migrateGenres();
