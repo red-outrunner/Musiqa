@@ -10,6 +10,10 @@ Text {
     property string searchQuery: ""
     readonly property var credits: track ? (track.artistCredits || (track.artist ? [{id: track.artistId, name: track.artist}] : [])) : []
     signal artistChosen(var credit)
+    function chooseArtist() {
+        if (credits.length === 1) artistChosen(credits[0]);
+        else if (credits.length > 1) artistChoice.open();
+    }
     function escaped(value) {
         return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
@@ -23,8 +27,17 @@ Text {
     activeFocusOnTab: credits.length > 0
     Accessible.role: Accessible.Link
     Accessible.name: credits.map(credit => credit.name).join(", ")
-    Accessible.onPressAction: if (credits.length === 1) root.artistChosen(credits[0])
-    Keys.onReturnPressed: if (credits.length === 1) root.artistChosen(credits[0])
+    Accessible.description: credits.length > 1 ? "Press Enter to choose an artist" : "Open artist page"
+    Accessible.onPressAction: root.chooseArtist()
+    Keys.onReturnPressed: root.chooseArtist()
+    Keys.onEnterPressed: root.chooseArtist()
+    Rectangle { anchors.fill: parent; visible: root.activeFocus; color: "transparent"; border.width: 2; border.color: Theme.accent; radius: Theme.dp(3) }
+    Menu {
+        id: artistChoice
+        objectName: "artistKeyboardMenu"
+        y: root.height; font: Theme.controlFont
+        Repeater { model: root.credits; delegate: MenuItem { required property var modelData; text: modelData.name; onTriggered: root.artistChosen(modelData) } }
+    }
     onLinkActivated: function(link) {
         if (link.indexOf("artist:") !== 0) return;
         const index = Number(link.substring(7));

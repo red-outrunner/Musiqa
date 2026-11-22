@@ -26,7 +26,11 @@ PlaybackWorker::PlaybackWorker(QObject *parent) : QObject(parent), m_mixer(48000
     const auto publish = [this] { emit updated(snapshot()); };
     connect(this, &PlaybackWorker::sourceChanged, this, publish);
     connect(this, &PlaybackWorker::entryIdChanged, this, publish);
-    connect(this, &PlaybackWorker::positionChanged, this, publish);
+    connect(this, &PlaybackWorker::positionChanged, this, [this, publish] {
+        const auto now = m_clock.elapsed();
+        if (m_economyMode && now - m_lastPositionPublish < 200) return;
+        m_lastPositionPublish = now; publish();
+    });
     connect(this, &PlaybackWorker::durationChanged, this, publish);
     connect(this, &PlaybackWorker::playbackStateChanged, this, publish);
     connect(this, &PlaybackWorker::mediaStatusChanged, this, publish);
@@ -62,6 +66,7 @@ PlaybackSnapshot PlaybackWorker::snapshot()
     result.crossfadeOnSkip = m_crossfadeOnSkip;
     result.crossfading = crossfading();
     result.sleepRemainingMs = sleepRemainingMs(); result.sleepAfterTrack = m_sleepAfterTrack;
+    result.economyMode = m_economyMode;
     result.equalizerEnabled = m_equalizer.enabled(); result.equalizerPreset = m_equalizer.preset();
     result.equalizerBandCount = m_equalizer.bandCount(); result.equalizerGains = m_equalizer.gains();
     result.equalizerCustomGains = m_equalizer.customGains(); result.equalizerFrequencies = m_equalizer.frequencies();
@@ -362,7 +367,16 @@ void PlaybackWorker::setPosition(qint64 position)
 void PlaybackWorker::sendListening(bool playing, bool finished)
 {
     for (const auto &voice : m_liveVoices)
-        emit listeningProgress(voice.token, voice.url, voice.position * 1000 / m_format.sampleRate(), voice.duration * 1000 / m_format.sampleRate(), playing, finished, m_clock.elapsed());
+        reportListening(voice.token, voice.url, voice.position * 1000 / m_format.sampleRate(), voice.duration * 1000 / m_format.sampleRate(), playing, finished, m_clock.elapsed());
+}
+void PlaybackWorker::reportListening(const QString &token, const QUrl &url, qint64 position, qint64 duration, bool playing, bool finished, qint64 timestamp)
+{
+    const auto previous = m_lastListeningReport.constFind(token);
+    if (m_economyMode && playing && !finished && previous != m_lastListeningReport.cend()
+        && timestamp >= *previous && timestamp - *previous < 100) return;
+    if (playing && !finished) m_lastListeningReport.insert(token, timestamp);
+    else m_lastListeningReport.remove(token);
+    emit listeningProgress(token, url, position, duration, playing, finished, timestamp);
 }
 
 void PlaybackWorker::deliverEvents()
@@ -380,10 +394,10 @@ void PlaybackWorker::deliverEvents()
             m_source = event.url; m_entryId = event.entryId; m_position = position; m_duration = duration;
             if (changed) { emit trackAdvanced(event.entryId, event.url); emit sourceChanged(); emit entryIdChanged(); }
             setStatus(QMediaPlayer::LoadedMedia); emit durationChanged(); emit positionChanged(); emit seekableChanged(); emit transitionChanged();
-            emit listeningProgress(event.token, event.url, position, duration, true, false, timestamp);
+            reportListening(event.token, event.url, position, duration, true, false, timestamp);
         } else if (event.kind == MixerEvent::Progress || event.kind == MixerEvent::Finished) {
             m_liveVoices[event.token] = event;
-            emit listeningProgress(event.token, event.url, position, duration, event.kind != MixerEvent::Finished, event.kind == MixerEvent::Finished, timestamp);
+            reportListening(event.token, event.url, position, duration, event.kind != MixerEvent::Finished, event.kind == MixerEvent::Finished, timestamp);
             if (event.token == m_displayToken && m_position != position) { m_position = position; emit positionChanged(); }
             if (event.kind == MixerEvent::Finished) { m_liveVoices.remove(event.token); emit transitionChanged(); }
         } else if (event.kind == MixerEvent::QueueEnded) {

@@ -21,6 +21,8 @@
         <file>components/KeyboardSettings.qml</file>
         <file>components/CacheSettings.qml</file>
         <file>components/DisplaySettingsDialog.qml</file>
+        <file>components/DesktopSettings.qml</file>
+        <file>components/PlaylistMigrationDialog.qml</file>
         <file>components/Icon.qml</file>
         <file>components/IconButton.qml</file>
         <file>components/ActionButton.qml</file>

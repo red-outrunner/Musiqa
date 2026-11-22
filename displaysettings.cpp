@@ -38,6 +38,12 @@ void DisplaySettings::initialize()
 {
     loadLibraryViewSettings();
     m_reducedMotion = m_settings.value("view/reducedMotion", false).toBool();
+    m_batterySaverMode = m_settings.value("desktop/batterySaver", "battery").toString();
+    if (!QStringList{"off", "battery", "always"}.contains(m_batterySaverMode)) m_batterySaverMode = "battery";
+    m_resumeAfterSleep = m_settings.value("desktop/resumeAfterSleep", false).toBool();
+    m_pauseOnDisconnect = m_settings.value("desktop/pauseOnDisconnect", true).toBool();
+    m_highContrast = m_settings.value("appearance/highContrast", false).toBool();
+    m_largeControls = m_settings.value("view/largeControls", false).toBool();
     m_shortcuts = m_settings.value("keyboard/shortcuts").toMap();
     m_theme = m_settings.value("appearance/theme", "dark").toString() == "light" ? "light" : "dark";
     m_artworkColors = m_settings.value("appearance/artworkColors", false).toBool();
@@ -138,6 +144,11 @@ void DisplaySettings::importPreferences(const QVariantMap &values)
     setSplitArtists(values.value("library/splitArtists", false).toBool());
     setArtistSeparators(values.value("library/artistSeparators", ",;|").toString());
     setReducedMotion(values.value("view/reducedMotion", false).toBool());
+    setBatterySaverMode(values.value("desktop/batterySaver", "battery").toString());
+    setResumeAfterSleep(values.value("desktop/resumeAfterSleep", false).toBool());
+    setPauseOnDisconnect(values.value("desktop/pauseOnDisconnect", true).toBool());
+    setHighContrast(values.value("appearance/highContrast", false).toBool());
+    setLargeControls(values.value("view/largeControls", false).toBool());
     m_shortcuts = values.value("keyboard/shortcuts").toMap();
     emit shortcutsChanged();
     save();
@@ -153,6 +164,11 @@ void DisplaySettings::save()
     m_settings.setValue("library/splitArtists", m_splitArtists);
     m_settings.setValue("library/artistSeparators", m_artistSeparators);
     m_settings.setValue("view/reducedMotion", m_reducedMotion);
+    m_settings.setValue("desktop/batterySaver", m_batterySaverMode);
+    m_settings.setValue("desktop/resumeAfterSleep", m_resumeAfterSleep);
+    m_settings.setValue("desktop/pauseOnDisconnect", m_pauseOnDisconnect);
+    m_settings.setValue("appearance/highContrast", m_highContrast);
+    m_settings.setValue("view/largeControls", m_largeControls);
     m_settings.setValue("keyboard/shortcuts", m_shortcuts);
     m_settings.setValue("libraryView/songColumns", m_songColumns);
     m_settings.setValue("playback/avoidRecentShuffle", m_avoidRecentShuffle);
@@ -206,7 +222,7 @@ void DisplaySettings::setArtwork(const QUrl &url)
 }
 void DisplaySettings::analyzeArtwork()
 {
-    if (!m_artworkColors || m_artworkUrl.isEmpty() || m_artworkWatcher.isRunning()) return;
+    if (!m_artworkColors || batterySaverActive() || m_artworkUrl.isEmpty() || m_artworkWatcher.isRunning()) return;
     const auto key = m_artworkUrl.toString();
     if (const auto *color = m_artworkCache.object(key)) { m_artworkAccent = *color; emit appearanceChanged(); return; }
     if (!m_artworkUrl.isLocalFile() && m_artworkUrl.scheme() != "qrc") return;
@@ -255,12 +271,51 @@ void DisplaySettings::watchWindow(QWindow *window, bool primary)
         watchScreen(screen); emit screenChanged(); emit systemFontChanged(); fitWindow(window);
     });
     if (primary) {
+        connect(window, &QWindow::visibilityChanged, this, &DisplaySettings::motionChanged);
         connect(window, &QWindow::widthChanged, this, &DisplaySettings::windowSizeChanged);
         connect(window, &QWindow::heightChanged, this, &DisplaySettings::windowSizeChanged);
     }
     QPointer<QWindow> guarded = window;
     QTimer::singleShot(0, this, [this, guarded] { if (guarded) fitWindow(guarded); });
     emit screenChanged(); emit windowSizeChanged();
+}
+
+bool DisplaySettings::reduceEffects() const
+{
+    return m_reducedMotion || batterySaverActive() || (m_primary
+        && (m_primary->visibility() == QWindow::Minimized || m_primary->visibility() == QWindow::Hidden));
+}
+void DisplaySettings::setBatterySaverMode(const QString &mode)
+{
+    if (mode == m_batterySaverMode || !QStringList{"off", "battery", "always"}.contains(mode)) return;
+    m_batterySaverMode = mode; m_saveTimer.start(); emit desktopPreferencesChanged(); emit powerSourceChanged(); emit motionChanged();
+    if (!batterySaverActive()) analyzeArtwork();
+}
+void DisplaySettings::setOnBattery(bool battery)
+{
+    if (battery == m_onBattery) return;
+    m_onBattery = battery; emit powerSourceChanged(); emit motionChanged();
+    if (!batterySaverActive()) analyzeArtwork();
+}
+void DisplaySettings::setResumeAfterSleep(bool enabled)
+{
+    if (enabled == m_resumeAfterSleep) return;
+    m_resumeAfterSleep = enabled; m_saveTimer.start(); emit desktopPreferencesChanged();
+}
+void DisplaySettings::setPauseOnDisconnect(bool enabled)
+{
+    if (enabled == m_pauseOnDisconnect) return;
+    m_pauseOnDisconnect = enabled; m_saveTimer.start(); emit desktopPreferencesChanged();
+}
+void DisplaySettings::setHighContrast(bool enabled)
+{
+    if (enabled == m_highContrast) return;
+    m_highContrast = enabled; m_saveTimer.start(); emit appearanceChanged();
+}
+void DisplaySettings::setLargeControls(bool enabled)
+{
+    if (enabled == m_largeControls) return;
+    m_largeControls = enabled; m_saveTimer.start(); emit preferencesChanged();
 }
 
 QRect DisplaySettings::fittedGeometry(const QRect &window, const QRect &available)

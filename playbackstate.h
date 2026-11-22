@@ -23,6 +23,7 @@ struct PlaybackSnapshot {
     QMediaPlayer::MediaStatus status = QMediaPlayer::NoMedia;
     bool gapless = true, crossfade = false, crossfadeOnSkip = false, crossfading = false;
     bool sleepAfterTrack = false;
+    bool economyMode = false;
     double crossfadeSeconds = 5;
     bool equalizerEnabled = false;
     QString equalizerPreset = QStringLiteral("bass");

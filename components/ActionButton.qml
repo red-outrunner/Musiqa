@@ -20,7 +20,7 @@ Button {
         border.color: root.visualFocus ? Theme.accent : Theme.border
         Behavior on color {
             ColorAnimation {
-                duration: Theme.preferences.reducedMotion ? 0 : 120
+                duration: Theme.preferences.reduceEffects ? 0 : 120
             }
         }
     }

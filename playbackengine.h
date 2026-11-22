@@ -40,6 +40,8 @@ class PlaybackEngine : public QObject
     Q_PROPERTY(QString outputDeviceName READ outputDeviceName NOTIFY audioOutputChanged)
     Q_PROPERTY(QString replayGainMode READ replayGainMode WRITE setReplayGainMode NOTIFY replayGainChanged)
     Q_PROPERTY(QObject *lyrics READ lyrics CONSTANT)
+    Q_PROPERTY(bool economyMode READ economyMode WRITE setEconomyMode NOTIFY optionsChanged)
+    Q_PROPERTY(bool pauseOnDisconnect READ pauseOnDisconnect WRITE setPauseOnDisconnect NOTIFY audioOutputChanged)
 public:
     explicit PlaybackEngine(QObject *parent = nullptr);
     ~PlaybackEngine() override;
@@ -81,6 +83,13 @@ public:
     QString replayGainMode() const { return m_snapshot.replayGainMode; }
     void setReplayGainMode(const QString &mode);
     QObject *lyrics() const;
+    bool economyMode() const { return m_snapshot.economyMode; }
+    void setEconomyMode(bool enabled);
+    bool pauseOnDisconnect() const { return m_pauseOnDisconnect; }
+    void setPauseOnDisconnect(bool enabled) { m_pauseOnDisconnect = enabled; emit audioOutputChanged(); }
+    QString activeOutputDeviceKey() const { return m_activeOutputKey; }
+    Q_INVOKABLE void recoverAudioOutput();
+    static bool shouldPauseForMissingDevice(const QString &active, const QStringList &available, bool playing, bool enabled);
     Q_INVOKABLE void setSource(const QUrl &url);
     Q_INVOKABLE void setPosition(qint64 position);
     Q_INVOKABLE void playEntry(const QString &id, const QUrl &url, const QVariantMap &info = {});
@@ -111,6 +120,7 @@ signals:
     void equalizerChanged();
     void audioOutputChanged();
     void replayGainChanged();
+    void outputInterrupted();
     void sleepTriggered();
     void errorOccurred(QMediaPlayer::Error error, const QString &errorString);
     void trackAdvanced(const QString &entryId, const QUrl &url);
@@ -127,6 +137,8 @@ private:
     QSettings m_settings;
     QMediaDevices m_mediaDevices;
     QString m_outputDeviceId, m_outputDeviceName;
+    QString m_activeOutputKey;
+    bool m_pauseOnDisconnect = true;
     QThread m_audioThread;
     PlaybackWorker *m_worker = nullptr;
     LyricsDocument *m_lyrics = nullptr;

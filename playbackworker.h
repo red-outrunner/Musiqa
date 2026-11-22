@@ -50,6 +50,8 @@ public:
     AudioOutputStatistics outputStatistics() const;
     PlaybackSnapshot snapshot();
     void setVolume(float volume);
+    void setEconomyMode(bool enabled) { m_economyMode = enabled; emit optionsChanged(); }
+    void recoverAudioOutput() { rebuildOutputForDevice(m_device); }
     void setEqualizerEnabled(bool enabled);
     void setEqualizerPreset(const QString &preset);
     void setEqualizerBandCount(int count);
@@ -91,6 +93,7 @@ private:
     void setStatus(QMediaPlayer::MediaStatus status);
     void configureMixer();
     void sendListening(bool playing, bool finished = false);
+    void reportListening(const QString &token, const QUrl &url, qint64 position, qint64 duration, bool playing, bool finished, qint64 timestamp);
     QAudioFormat m_format, m_deviceFormat;
     QAudioDevice m_device;
     AudioMixer m_mixer;
@@ -115,6 +118,9 @@ private:
     qint64 m_audioOrigin = 0, m_pausedAt = 0;
     qint64 m_sleepLength = 0;
     bool m_sleepAfterTrack = false;
+    bool m_economyMode = false;
+    qint64 m_lastPositionPublish = -1000;
+    QHash<QString, qint64> m_lastListeningReport;
     bool m_gapless = true, m_crossfade = false, m_crossfadeOnSkip = false;
     double m_crossfadeSeconds = 5;
     QString m_replayGainMode = QStringLiteral("off");

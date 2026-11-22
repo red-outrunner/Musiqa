@@ -16,10 +16,15 @@ ItemDelegate {
     readonly property bool selected: controller.selectedUrls.indexOf(track.fileUrl) >= 0
     implicitHeight: Theme.rowHeight(65)
     height: implicitHeight
+    Accessible.name: (track.title || "Unavailable track") + ", " + (track.artist || "Unknown artist")
+    Accessible.description: (track.album || "") + ", " + controller.formatTime(track.duration || 0)
+    focusPolicy: Qt.StrongFocus
     onClicked: controller.playTrack(track, playbackModel ? playbackModel.entries() : (playbackTracks || controller.visibleTracks.entries()))
     TapHandler { acceptedButtons: Qt.RightButton; onTapped: root.controller.openTrackMenu(root.track, root) }
     background: Rectangle {
-        color: root.selected ? Theme.selected : root.current ? Theme.playing : root.hovered ? Theme.hover : "transparent"
+        color: root.selected || root.visualFocus ? Theme.selected : root.current ? Theme.playing : root.hovered ? Theme.hover : "transparent"
+        border.width: root.visualFocus ? 2 : 0
+        border.color: Theme.accent
         radius: Theme.dp(6)
         Rectangle { objectName: root.objectName + "PlayingIndicator"; visible: root.current; width: Theme.dp(3); height: parent.height; radius: Theme.dp(2); color: Theme.accent }
     }

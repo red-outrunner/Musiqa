@@ -17,13 +17,13 @@ Dialog {
     padding: Theme.gap(20)
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle { color: Theme.surface; radius: Theme.dp(12); border.color: Theme.border }
-    readonly property var sectionNames: ["Appearance", "Playback", "Audio output", "Equalizer", "Artist credits", "Display and layout", "Artwork cache", "Keyboard shortcuts", "Library tools", "About"]
+    readonly property var sectionNames: ["Appearance", "Playback", "Laptop and performance", "Audio output", "Equalizer", "Artist credits", "Display and layout", "Artwork cache", "Keyboard shortcuts", "Library tools", "About"]
     function goToSection(name) { scrollToSection(sectionNames.indexOf(name)); }
     function scrollToSection(index) {
         if (index < 0 || index >= sectionNames.length) return;
         settingsSections.currentIndex = index;
         Qt.callLater(function() {
-            const sections = [appearanceSection, playbackSection, audioOutputSection, equalizerSection,
+            const sections = [appearanceSection, playbackSection, desktopSection, audioOutputSection, equalizerSection,
                 artistSection, displaySection, cacheSection, keyboardSection, libraryToolsSection, aboutSection];
             const flickable = settingsScroll.contentItem;
             if (flickable && sections[index])
@@ -109,6 +109,11 @@ Dialog {
                 Label { text: "days"; color: Theme.secondary; font: Theme.controlFont }
             }
             Text { text: "Recently heard songs move toward the end; every queued song remains available. Uses saved listening history, with no audio analysis."; color: Theme.muted; font: Theme.controlFont; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            DesktopSettings {
+                id: desktopSection; controller: root.controller
+                monitoring: root.visible && y + height > settingsScroll.contentItem.contentY
+                    && y < settingsScroll.contentItem.contentY + settingsScroll.contentItem.height
+            }
             Loader { id: audioOutputSection; Layout.fillWidth: true; active: !!root.controller; sourceComponent: AudioOutputSettings { player: root.controller.playbackBackend } }
             Loader { id: equalizerSection; Layout.fillWidth: true; active: !!root.controller; sourceComponent: EqualizerSettings { player: root.controller.playbackBackend } }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
@@ -212,12 +217,23 @@ Dialog {
                 onToggled: Theme.preferences.reducedMotion = checked
                 font: Theme.controlFont
             }
+            CheckBox {
+                objectName: "highContrastCheckBox"; text: "High contrast text and outlines"; checked: Theme.preferences.highContrast
+                onToggled: Theme.preferences.highContrast = checked; font: Theme.controlFont; palette.text: Theme.text; Layout.fillWidth: true
+                contentItem: Text { text: parent.text; font: parent.font; color: Theme.text; wrapMode: Text.WordWrap; leftPadding: parent.indicator.width + parent.spacing; verticalAlignment: Text.AlignVCenter }
+            }
+            CheckBox {
+                objectName: "largeControlsCheckBox"; text: "Larger icon controls"; checked: Theme.preferences.largeControls
+                onToggled: Theme.preferences.largeControls = checked; font: Theme.controlFont; palette.text: Theme.text; Layout.fillWidth: true
+                contentItem: Text { text: parent.text; font: parent.font; color: Theme.text; wrapMode: Text.WordWrap; leftPadding: parent.indicator.width + parent.spacing; verticalAlignment: Text.AlignVCenter }
+            }
             Text { text: "Simplifies fades and hover transitions while keeping scrolling smooth."; color: Theme.muted; font: Theme.controlFont; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             CacheSettings { id: cacheSection }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
             KeyboardSettings { id: keyboardSection }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
             Label { id: libraryToolsSection; visible: !!root.controller; text: "Library tools"; color: Theme.text; font: Qt.font({family: Theme.preferences.fontFamily, pointSize: Theme.pointSize, bold: true}) }
+            ActionButton { objectName: "playlistMigrationSettingsButton"; visible: !!root.controller; text: "Import from another player…"; primary: false; Layout.fillWidth: true; onClicked: { root.close(); root.controller.openPlaylistMigration(); } }
             ActionButton { objectName: "repairMovedFilesSettingsButton"; visible: !!root.controller; text: "Repair moved files…"; primary: false; Layout.fillWidth: true; onClicked: { root.close(); root.controller.openLibraryTools("repair"); } }
             ActionButton { objectName: "backupRestoreSettingsButton"; visible: !!root.controller; text: "Backup and restore…"; primary: false; Layout.fillWidth: true; onClicked: { root.close(); root.controller.openLibraryTools("backup"); } }
             ActionButton { objectName: "duplicateFinderSettingsButton"; visible: !!root.controller; text: "Find duplicate files…"; primary: false; Layout.fillWidth: true; onClicked: { root.close(); root.controller.openLibraryTools("duplicates"); } }

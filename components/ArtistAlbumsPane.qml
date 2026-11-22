@@ -118,10 +118,12 @@ Item {
                     ItemDelegate {
                         id: header
                         objectName: "artistAlbumHeader" + row.index
+                        Accessible.name: (row.entry.name || "Album") + ", " + row.entry.trackCount + " songs"
+                        Accessible.description: root.expandedAlbums.indexOf(row.entry.id) >= 0 ? "Collapse album" : "Expand album"
                         implicitHeight: Theme.rowHeight(82)
                         onClicked: root.toggleAlbum(row.entry.id)
                         TapHandler { acceptedButtons: Qt.RightButton; onTapped: root.controller.openGroupMenu(row.entry, "album", header) }
-                        background: Rectangle { color: header.hovered ? Theme.hover : Theme.surface; radius: Theme.dp(7) }
+                        background: Rectangle { color: header.visualFocus ? Theme.selected : header.hovered ? Theme.hover : Theme.surface; radius: Theme.dp(7); border.width: header.visualFocus ? 2 : 0; border.color: Theme.accent }
                         contentItem: RowLayout {
                             spacing: Theme.gap(12)
                             Icon { name: root.expandedAlbums.indexOf(row.entry.id) >= 0 ? "down" : "arrow"; color: Theme.muted; Layout.preferredWidth: Theme.dp(16); Layout.preferredHeight: Theme.dp(16) }

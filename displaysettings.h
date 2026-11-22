@@ -32,6 +32,14 @@ class DisplaySettings : public QObject
     Q_PROPERTY(bool splitArtists READ splitArtists WRITE setSplitArtists NOTIFY artistSettingsChanged)
     Q_PROPERTY(QString artistSeparators READ artistSeparators WRITE setArtistSeparators NOTIFY artistSettingsChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY motionChanged)
+    Q_PROPERTY(bool reduceEffects READ reduceEffects NOTIFY motionChanged)
+    Q_PROPERTY(QString batterySaverMode READ batterySaverMode WRITE setBatterySaverMode NOTIFY desktopPreferencesChanged)
+    Q_PROPERTY(bool onBattery READ onBattery NOTIFY powerSourceChanged)
+    Q_PROPERTY(bool batterySaverActive READ batterySaverActive NOTIFY powerSourceChanged)
+    Q_PROPERTY(bool resumeAfterSleep READ resumeAfterSleep WRITE setResumeAfterSleep NOTIFY desktopPreferencesChanged)
+    Q_PROPERTY(bool pauseOnDisconnect READ pauseOnDisconnect WRITE setPauseOnDisconnect NOTIFY desktopPreferencesChanged)
+    Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY appearanceChanged)
+    Q_PROPERTY(bool largeControls READ largeControls WRITE setLargeControls NOTIFY preferencesChanged)
     Q_PROPERTY(QVariantMap shortcuts READ shortcuts NOTIFY shortcutsChanged)
     Q_PROPERTY(QVariantList shortcutOptions READ shortcutOptions NOTIFY shortcutsChanged)
     Q_PROPERTY(bool capturingShortcut READ capturingShortcut WRITE setCapturingShortcut NOTIFY shortcutCaptureChanged)
@@ -66,6 +74,20 @@ public:
     void setArtistSeparators(const QString &separators);
     bool reducedMotion() const { return m_reducedMotion; }
     void setReducedMotion(bool enabled);
+    QString batterySaverMode() const { return m_batterySaverMode; }
+    bool onBattery() const { return m_onBattery; }
+    bool batterySaverActive() const { return m_batterySaverMode == "always" || (m_batterySaverMode == "battery" && m_onBattery); }
+    bool reduceEffects() const;
+    bool resumeAfterSleep() const { return m_resumeAfterSleep; }
+    bool pauseOnDisconnect() const { return m_pauseOnDisconnect; }
+    bool highContrast() const { return m_highContrast; }
+    bool largeControls() const { return m_largeControls; }
+    void setBatterySaverMode(const QString &mode);
+    void setOnBattery(bool battery);
+    void setResumeAfterSleep(bool enabled);
+    void setPauseOnDisconnect(bool enabled);
+    void setHighContrast(bool enabled);
+    void setLargeControls(bool enabled);
     QVariantList songColumns() const { return m_songColumns; }
     void setSongColumns(const QVariantList &columns);
     Q_INVOKABLE void resetSongColumns();
@@ -102,6 +124,8 @@ signals:
     void shortcutsChanged();
     void shortcutCaptureChanged();
     void libraryViewChanged();
+    void desktopPreferencesChanged();
+    void powerSourceChanged();
 protected:
     bool eventFilter(QObject *object, QEvent *event) override;
 private:
@@ -125,6 +149,9 @@ private:
     bool m_splitArtists = false;
     QString m_artistSeparators = QStringLiteral(",;|");
     bool m_reducedMotion = false;
+    QString m_batterySaverMode = QStringLiteral("battery");
+    bool m_onBattery = false, m_resumeAfterSleep = false, m_pauseOnDisconnect = true;
+    bool m_highContrast = false, m_largeControls = false;
     bool m_capturingShortcut = false;
     QVariantMap m_shortcuts;
     QVariantList m_songColumns;

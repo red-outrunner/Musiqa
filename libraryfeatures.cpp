@@ -183,6 +183,32 @@ QString TrackListModel::importPlaylist(const QUrl &fileUrl)
     if (skipped) emit importError(tr("Playlist imported; %1 missing, unsupported, or remote entries skipped.").arg(skipped));
     return id;
 }
+QString TrackListModel::importResolvedPlaylist(const QString &name, const QStringList &inputs)
+{
+    if (scanning() || metadataBusy()) { emit importError(tr("Wait for the current library operation before importing a playlist.")); return {}; }
+    const auto title = name.simplified();
+    if (title.isEmpty() || title.size() > 80 || inputs.isEmpty() || inputs.size() > 100000) {
+        emit importError(tr("Choose a playlist name of 1–80 characters and at least one song.")); return {};
+    }
+    QStringList urls; QSet<QString> seen; QList<QUrl> imports;
+    const QStringList formats{"mp3", "flac", "ogg", "oga", "opus", "wav", "m4a", "aac", "aif", "aiff", "wma"};
+    for (const auto &input : inputs) {
+        const QUrl source(input); const QFileInfo file(source.toLocalFile());
+        if (!source.isLocalFile() || !file.isFile() || !file.isReadable() || !formats.contains(file.suffix(), Qt::CaseInsensitive)) {
+            emit importError(tr("A selected song has moved or is unreadable. Preview the playlist again.")); return {};
+        }
+        const auto url = QUrl::fromLocalFile(file.canonicalFilePath()); const auto key = url.toString();
+        if (seen.contains(key)) continue;
+        seen.insert(key); urls.append(key); if (trackForUrl(key).isEmpty()) imports.append(url);
+    }
+    const auto before = m_playlistData;
+    ++m_suppressPlaylistUndo; const auto id = createPlaylist(title); --m_suppressPlaylistUndo;
+    if (id.isEmpty()) return {};
+    auto playlist = m_playlistData.last().toMap(); playlist["urls"] = urls; m_playlistData.last() = playlist;
+    recordPlaylistEdit(before, tr("Import playlist")); saveSettings(); publishUpdates();
+    if (!imports.isEmpty()) addFiles(imports);
+    return id;
+}
 
 void TrackListModel::recordPlaylistEdit(const QVariantList &before, const QString &label)
 {

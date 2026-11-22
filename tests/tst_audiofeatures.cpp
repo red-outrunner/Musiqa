@@ -70,6 +70,28 @@ private slots:
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settings.path());
     }
     void init() { QSettings().clear(); }
+    void batterySaverThrottlesNotificationsAndKeepsListeningBoundaries()
+    {
+        PlaybackWorker worker;
+        QSignalSpy updates(&worker, &PlaybackWorker::updated), samples(&worker, &PlaybackWorker::listeningProgress);
+        for (int i = 0; i < 20; ++i) emit worker.positionChanged();
+        QCOMPARE(updates.size(), 20);
+        worker.setEconomyMode(true); updates.clear();
+        for (int i = 0; i < 20; ++i) emit worker.positionChanged();
+        QVERIFY(updates.size() <= 1);
+        const QUrl url = QUrl::fromLocalFile("/battery-test.wav");
+        for (int position = 0; position <= 500; position += 20)
+            worker.reportListening("current", url, position, 1000, true, false, position);
+        QCOMPARE(samples.size(), 6); QCOMPARE(samples.last()[2].toLongLong(), 500);
+        worker.reportListening("current", url, 510, 1000, false, false, 510); // Pause is always delivered.
+        worker.reportListening("current", url, 510, 1000, true, false, 511); // Resume keeps the same position.
+        worker.reportListening("current", url, 520, 1000, false, true, 521); // An early skip must finalize listening.
+        QCOMPARE(samples.size(), 9); QVERIFY(samples.last()[5].toBool());
+        QCOMPARE(samples.last()[2].toLongLong(), 520); QVERIFY(worker.m_lastListeningReport.isEmpty());
+        worker.setEconomyMode(false); updates.clear();
+        for (int i = 0; i < 20; ++i) emit worker.positionChanged();
+        QCOMPARE(updates.size(), 20);
+    }
     void skipCrossfadeMixesImmediatelyAndFinishesBeforeTheOutgoingSongEnds()
     {
         QAudioFormat format; format.setSampleRate(1000); format.setChannelCount(2); format.setSampleFormat(QAudioFormat::Float);

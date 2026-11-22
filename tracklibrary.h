@@ -13,6 +13,7 @@
 #include <memory>
 
 class LibraryMaintenance;
+class PlaylistMigration;
 
 class TrackListModel : public QObject
 {
@@ -43,6 +44,7 @@ class TrackListModel : public QObject
     Q_PROPERTY(bool pagedLibrary READ pagedLibrary NOTIFY tracksChanged)
     Q_PROPERTY(int residentTrackCount READ residentTrackCount NOTIFY residentTracksChanged)
     Q_PROPERTY(QObject *maintenance READ maintenance CONSTANT)
+    Q_PROPERTY(QObject *playlistMigration READ playlistMigration CONSTANT)
     Q_PROPERTY(QVariantList pinnedCollections READ pinnedCollections NOTIFY collectionToolsChanged)
     Q_PROPERTY(QVariantList customSmartPlaylists READ customSmartPlaylists NOTIFY collectionToolsChanged)
     Q_PROPERTY(bool openingFiles READ openingFiles NOTIFY openingFilesChanged)
@@ -57,6 +59,7 @@ public:
     bool pagedLibrary() const { return m_database && m_database->valid(); }
     int residentTrackCount() const { return m_tracks.size(); }
     QObject *maintenance();
+    QObject *playlistMigration();
     bool openingFiles() const { return m_openWatcher.isRunning() || !m_openFileRequests.isEmpty() || !m_activeOpenRequest.isEmpty(); }
     Q_INVOKABLE void openFiles(const QList<QUrl> &urls, bool append = false);
     QVariantList pinnedCollections() const;
@@ -113,6 +116,7 @@ public:
     Q_INVOKABLE void setArtistSeparation(bool enabled, const QString &separators);
     Q_INVOKABLE QString createPlaylist(const QString &name, const QString &fileUrl = QString());
     Q_INVOKABLE QString createPlaylistFromUrls(const QString &name, const QStringList &urls);
+    Q_INVOKABLE QString importResolvedPlaylist(const QString &name, const QStringList &urls);
     Q_INVOKABLE bool addToPlaylist(const QString &id, const QString &fileUrl);
     Q_INVOKABLE int addTracksToPlaylist(const QString &id, const QStringList &urls);
     Q_INVOKABLE bool setTracksFavorite(const QStringList &urls, bool favorite);
@@ -208,6 +212,7 @@ private:
 
     QSettings m_settings;
     LibraryMaintenance *m_maintenance = nullptr;
+    PlaylistMigration *m_playlistMigration = nullptr;
     std::unique_ptr<LibraryDatabase> m_database;
     bool m_workingSetLoaded = true;
     bool m_databaseSynchronized = false;

@@ -157,7 +157,7 @@ void PlaybackEngine::applySnapshot(const PlaybackSnapshot &state)
     if (old.state != state.state) emit playbackStateChanged();
     if (old.status != state.status) emit mediaStatusChanged();
     if (old.gapless != state.gapless || old.crossfade != state.crossfade || old.crossfadeOnSkip != state.crossfadeOnSkip
-        || old.crossfadeSeconds != state.crossfadeSeconds) emit optionsChanged();
+        || old.crossfadeSeconds != state.crossfadeSeconds || old.economyMode != state.economyMode) emit optionsChanged();
     if (old.crossfading != state.crossfading) emit transitionChanged();
     if (old.sleepRevision != state.sleepRevision) emit sleepChanged();
     if (old.equalizerEnabled != state.equalizerEnabled || old.equalizerPreset != state.equalizerPreset
@@ -267,13 +267,34 @@ void PlaybackEngine::setOutputDeviceId(const QString &id)
 }
 void PlaybackEngine::updateOutputDevice()
 {
+    QStringList available;
+    for (const auto &device : QMediaDevices::audioOutputs()) available.append(deviceKey(device));
+    const bool interrupted = shouldPauseForMissingDevice(m_activeOutputKey, available,
+        playbackState() == QMediaPlayer::PlayingState, m_pauseOnDisconnect);
     auto selected = QMediaDevices::defaultAudioOutput();
     if (!m_outputDeviceId.isEmpty()) {
         for (const auto &device : QMediaDevices::audioOutputs())
             if (deviceKey(device) == m_outputDeviceId) { selected = device; break; }
     }
     m_outputDeviceName = selected.isNull() ? tr("No audio output") : selected.description();
-    dispatch([this, selected] { m_worker->setOutputDevice(selected); }); emit audioOutputChanged();
+    m_activeOutputKey = selected.isNull() ? QString() : deviceKey(selected);
+    dispatch([this, selected, interrupted] { if (interrupted) m_worker->pause(); m_worker->setOutputDevice(selected); });
+    emit audioOutputChanged();
+    if (interrupted) emit outputInterrupted();
+}
+bool PlaybackEngine::shouldPauseForMissingDevice(const QString &active, const QStringList &available, bool playing, bool enabled)
+{
+    return enabled && playing && !active.isEmpty() && !available.contains(active);
+}
+void PlaybackEngine::recoverAudioOutput()
+{
+    updateOutputDevice();
+    dispatch([this] { m_worker->recoverAudioOutput(); });
+}
+void PlaybackEngine::setEconomyMode(bool enabled)
+{
+    if (enabled == economyMode()) return;
+    dispatch([this, enabled] { m_worker->setEconomyMode(enabled); });
 }
 QVariantMap PlaybackEngine::exportOptions() const
 {

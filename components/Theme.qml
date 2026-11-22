@@ -17,10 +17,10 @@ QtObject {
     readonly property color hover: Qt.tint(light ? "#e3f1f2" : "#20353b", Qt.rgba(accent.r, accent.g, accent.b, 0.08))
     readonly property color selected: Qt.tint(light ? "#c9e8e9" : "#24464c", Qt.rgba(accent.r, accent.g, accent.b, 0.16))
     readonly property color playing: Qt.tint(background, Qt.rgba(accent.r, accent.g, accent.b, 0.08))
-    readonly property color text: light ? "#142f35" : "#e5f2f4"
-    readonly property color secondary: light ? "#3e626b" : "#b0cbd1"
-    readonly property color muted: light ? "#526f78" : "#8ba8b1"
-    readonly property color border: light ? "#a9c6cd" : "#3c5964"
+    readonly property color text: preferences.highContrast ? (light ? "#000000" : "#ffffff") : (light ? "#142f35" : "#e5f2f4")
+    readonly property color secondary: preferences.highContrast ? (light ? "#222222" : "#eeeeee") : (light ? "#3e626b" : "#b0cbd1")
+    readonly property color muted: preferences.highContrast ? secondary : (light ? "#526f78" : "#8ba8b1")
+    readonly property color border: preferences.highContrast ? secondary : (light ? "#a9c6cd" : "#3c5964")
     readonly property color nowPlayingTop: Qt.tint(light ? "#e0f3f3" : "#142f36", Qt.rgba(accent.r, accent.g, accent.b, 0.14))
     readonly property color danger: light ? "#a52735" : "#ffb0b8"
     readonly property color warning: light ? "#885118" : "#eec58f"

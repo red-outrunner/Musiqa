@@ -151,6 +151,9 @@ ApplicationWindow {
     property double restorePosition: -1
     property bool playAfterQueueRestore: false
     property bool desktopControlsAvailable: false
+    property string desktopControlsName: "Unavailable in this session"
+    property var desktopEnvironment: null
+    property var appDiagnostics: null
     property string pendingOpenUrl: ""
     signal playbackSeeked(double position)
     readonly property bool isPlaying: player.playbackState === MediaPlayer.PlayingState
@@ -198,6 +201,7 @@ ApplicationWindow {
     }
     function openSmartEditor(details) { smartEditor.details = details || {}; smartEditor.open(); }
     function openLibraryTools(page) { libraryTools.begin(page || "repair"); }
+    function openPlaylistMigration() { playlistMigrationPanel.open(); }
     function openLyrics(track) {
         if (!track && !currentTrack) return;
         lyricsPanel.track = track || currentTrack;
@@ -1245,6 +1249,11 @@ ApplicationWindow {
         sourceComponent: LibraryMaintenanceDialog { parent: Overlay.overlay; controller: win }
     }
     LazyPanel {
+        id: playlistMigrationPanel
+        objectName: "playlistMigrationLoader"
+        sourceComponent: PlaylistMigrationDialog { parent: Overlay.overlay; controller: win }
+    }
+    LazyPanel {
         id: queuePlaylistPanel
         sourceComponent: QueuePlaylistDialog {
             parent: Overlay.overlay
@@ -1536,6 +1545,9 @@ ApplicationWindow {
         entryId: win.currentQueueId
         audioOutput.volume: library.volume
         audioOutput.muted: win.muted
+        economyMode: Theme.preferences.batterySaverActive
+        pauseOnDisconnect: Theme.preferences.pauseOnDisconnect
+        onOutputInterrupted: { win.persistSession(); win.showToast("Audio output disconnected. Playback paused."); }
         onDurationChanged: win.applyRestoredPosition()
         onSeekableChanged: win.applyRestoredPosition()
         onMediaStatusChanged: win.applyRestoredPosition()
@@ -2546,8 +2558,16 @@ ApplicationWindow {
                         }
                         required property int index
                         objectName: "groupCard" + index
+                        activeFocusOnTab: !pooled
+                        onActiveFocusChanged: if (activeFocus) groupGrid.positionViewAtIndex(index, GridView.Contain)
+                        Accessible.role: Accessible.Button
+                        Accessible.name: (modelData.name || "Collection") + ", " + modelData.trackCount + " songs"
+                        Accessible.onPressAction: win.showGroup(groupCard.modelData)
+                        Keys.onReturnPressed: win.showGroup(groupCard.modelData)
+                        Keys.onEnterPressed: win.showGroup(groupCard.modelData)
                         width: groupGrid.cellWidth
                         height: groupGrid.cellHeight
+                        Rectangle { anchors.fill: parent; z: 5; color: "transparent"; visible: groupCard.activeFocus; border.width: 2; border.color: Theme.accent; radius: Theme.dp(7) }
                         Rectangle { anchors.fill: parent; anchors.bottomMargin: 1; visible: win.collectionListView; radius: Theme.dp(7); color: groupMouse.containsMouse ? Theme.hover : Theme.surface }
                         CoverArt {
                             id: groupCover
@@ -2865,9 +2885,26 @@ ApplicationWindow {
                             }
                             required property int index
                             objectName: "songRow" + index
+                            activeFocusOnTab: true
+                            onActiveFocusChanged: if (activeFocus) songList.positionViewAtIndex(index, ListView.Contain)
+                            Accessible.role: Accessible.ListItem
+                            Accessible.name: (track.title || "Unavailable track") + ", " + (track.artist || "Unknown artist")
+                            Accessible.description: (track.album || "") + ", " + win.formatTime(track.duration || 0)
+                            Accessible.onPressAction: win.playTrack(songRow.track, win.visibleTracks.entries())
+                            Keys.onReturnPressed: win.playTrack(songRow.track, win.visibleTracks.entries())
+                            Keys.onEnterPressed: win.playTrack(songRow.track, win.visibleTracks.entries())
+                            function focusNeighbor(offset) {
+                                const target = Math.max(0, Math.min(songList.count - 1, index + offset));
+                                songList.currentIndex = target; songList.positionViewAtIndex(target, ListView.Contain); songList.forceLayout();
+                                const item = songList.itemAtIndex(target); if (item) item.forceActiveFocus(Qt.TabFocusReason);
+                            }
+                            Keys.onUpPressed: focusNeighbor(-1)
+                            Keys.onDownPressed: focusNeighbor(1)
                             width: songList.contentWidth
                             height: Theme.rowHeight(65)
                             radius: Theme.dp(6)
+                            border.width: activeFocus ? 2 : 0
+                            border.color: Theme.accent
                             readonly property bool current: win.currentUrl === track.fileUrl
                             readonly property bool reorderable: win.collectionKind === "playlist" && win.sortBy === "Order" && !win.searchQuery
                             color: playlistDrop.containsDrag || win.selectedUrls.indexOf(track.fileUrl) >= 0 ? Theme.selected : current ? Theme.playing : rowMouse.containsMouse ? Theme.hover : "transparent"
@@ -3383,6 +3420,8 @@ ApplicationWindow {
                     required property string fileUrl
                     required property int index
                     objectName: "queueRow" + index
+                    Accessible.name: (track.title || "Unavailable track") + ", " + (track.artist || "Unknown artist") + ", queue item " + (index + 1)
+                    focusPolicy: Qt.StrongFocus
                     readonly property var track: win.trackForUrl(fileUrl)
                     width: ListView.view.width
                     height: Theme.rowHeight(54)

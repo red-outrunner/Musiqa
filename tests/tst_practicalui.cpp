@@ -7,6 +7,8 @@
 #include "librarymaintenance.h"
 #include "lyricsdocument.h"
 #include "audiotestrequirements.h"
+#include "playlistmigration.h"
+#include <QAccessible>
 
 #include <QAudioOutput>
 #include <QDataStream>
@@ -986,6 +988,59 @@ private slots:
         QTest::addColumn<QSize>("size"); QTest::addColumn<qreal>("textScale");
         QTest::newRow("desktop") << QSize(1280, 850) << qreal(1);
         QTest::newRow("small-window-large-text") << QSize(800, 600) << qreal(1.5);
+    }
+
+    void desktopPreferencesAndPlaylistMigrationAreKeyboardAccessible_data()
+    {
+        QTest::addColumn<QSize>("windowSize"); QTest::addColumn<double>("scale");
+        QTest::newRow("normal") << QSize(1280, 850) << 1.0;
+        QTest::newRow("large-text") << QSize(900, 640) << 1.6;
+    }
+    void desktopPreferencesAndPlaylistMigrationAreKeyboardAccessible()
+    {
+        QFETCH(QSize, windowSize); QFETCH(double, scale);
+        QVERIFY(seedLibrary()); QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
+        auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player");
+        auto *preferences = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(library && player && preferences);
+        const auto previous = preferences->exportPreferences();
+        const auto restore = qScopeGuard([preferences, previous] { preferences->importPreferences(previous); });
+        preferences->setTextScale(scale); preferences->setHighContrast(false); preferences->setLargeControls(false);
+        QTRY_VERIFY(window->property("sessionRestored").toBool()); window->resize(windowSize); QTest::qWait(30);
+        QVERIFY(QMetaObject::invokeMethod(window, "openDisplaySettings"));
+        QTRY_VERIFY(window->findChild<QObject *>("displaySettingsDialog"));
+        auto *dialog = window->findChild<QObject *>("displaySettingsDialog");
+        QVERIFY(QMetaObject::invokeMethod(dialog, "goToSection", Q_ARG(QVariant, QString("Laptop and performance"))));
+        auto *battery = revealSetting(window, "batterySaverModeBox"); QVERIFY(insideWindow(window, battery));
+        battery->forceActiveFocus(); QTest::keyClick(window, Qt::Key_End);
+        QTRY_COMPARE(preferences->batterySaverMode(), QString("always")); QTRY_VERIFY(player->economyMode()); QVERIFY(preferences->reduceEffects());
+        QVERIFY(insideWindow(window, revealSetting(window, "pauseOnDisconnectCheckBox")));
+        QVERIFY(insideWindow(window, revealSetting(window, "resumeAfterSleepCheckBox")));
+        QVERIFY(insideWindow(window, revealSetting(window, "highContrastCheckBox"))); QVERIFY(click(window, "highContrastCheckBox")); QVERIFY(preferences->highContrast());
+        QVERIFY(insideWindow(window, revealSetting(window, "largeControlsCheckBox"))); QVERIFY(click(window, "largeControlsCheckBox")); QVERIFY(preferences->largeControls());
+        QVERIFY(click(window, "closeSettingsButton")); QTest::qWait(30);
+        QVERIFY(click(window, "navSongs")); QTRY_VERIFY(findItem(window->contentItem(), "songRow0"));
+        auto *first = findItem(window->contentItem(), "songRow0"); first->forceActiveFocus();
+        auto *accessible = QAccessible::queryAccessibleInterface(first); QVERIFY(accessible); QVERIFY(accessible->text(QAccessible::Name).contains("First song"));
+        QTest::keyClick(window, Qt::Key_Down); QTRY_VERIFY(findItem(window->contentItem(), "songRow1")->hasActiveFocus());
+        QVERIFY(click(window, "navAlbums")); QTRY_VERIFY(findItem(window->contentItem(), "groupCard0"));
+        findItem(window->contentItem(), "groupCard0")->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Return);
+        QTRY_COMPARE(window->property("collectionKind").toString(), QString("album"));
+
+        const auto playlist = m_temp.filePath(QString("Migration-%1.m3u8").arg(m_fixture));
+        QFile source(playlist); QVERIFY(source.open(QIODevice::WriteOnly));
+        source.write(QUrl::fromLocalFile(m_musicRoot + "/Artist/Album/First.wav").toString().toUtf8() + '\n');
+        source.write(QUrl::fromLocalFile(m_musicRoot + "/Other/Second.wav").toString().toUtf8() + '\n'); source.close();
+        QVERIFY(QMetaObject::invokeMethod(window, "openPlaylistMigration")); QTRY_VERIFY(window->findChild<QObject *>("playlistMigrationDialog"));
+        auto *migrationDialog = window->findChild<QObject *>("playlistMigrationDialog"); migrationDialog->setProperty("playlistFile", QUrl::fromLocalFile(playlist));
+        QVERIFY(insideWindow(window, findItem(window->contentItem(), "migrationPreviewButton")));
+        QVERIFY(click(window, "migrationPreviewButton"));
+        auto *migration = qobject_cast<PlaylistMigration *>(library->playlistMigration()); QVERIFY(migration);
+        QTRY_VERIFY(!migration->busy()); QCOMPARE(migration->selectedCount(), 2);
+        QTRY_COMPARE(findItem(window->contentItem(), "migrationPreviewList")->property("count").toInt(), 2);
+        QVERIFY(insideWindow(window, findItem(window->contentItem(), "migrationImportButton"))); QVERIFY(click(window, "migrationImportButton"));
+        QTRY_COMPARE(window->property("collectionKind").toString(), QString("playlist")); QCOMPARE(library->songs()->count(), 2);
+        QCOMPARE(warnings.size(), 0);
     }
 
     void audioControlsStayUsableWithLargeFonts()
