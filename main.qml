@@ -1015,7 +1015,13 @@ ApplicationWindow {
         queueEntries.synchronize(queueItems);
     }
     onCurrentQueueIdChanged: { sessionSave.restart(); prepareTimer.restart(); queueEntries.synchronize(queueItems); }
-    onRepeatModeChanged: { sessionSave.restart(); prepareTimer.restart(); }
+    onRepeatModeChanged: {
+        sessionSave.restart();
+        // A seek near the end can render the next voice before a deferred
+        // preparation runs. Apply repeat changes before accepting that seek.
+        if (sessionRestored) prepareNextTrack();
+        else prepareTimer.restart();
+    }
     onMutedChanged: sessionSave.restart()
     onSearchQueryChanged: {
         searchDelay.stop();

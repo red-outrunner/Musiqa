@@ -6,6 +6,7 @@ An update to Musica, the offline music player by **weo sikho fuzile**.
 - Now Playing controls stay in place when song titles wrap.
 - Batch selections clear after successful actions, and metadata editing suggests existing artists, albums, and genres.
 - Search plays the latest query immediately, even when Enter is pressed quickly.
+- Repeat changes apply immediately, preventing an extra repeat when seeking near a song's end.
 - Faster batch favorites and artist album updates, with more reliable artist-page scroll restoration.
 - Folder matching and library refresh fixes.
 
