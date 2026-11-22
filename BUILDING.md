@@ -20,6 +20,8 @@ Keep `BUILD_TESTING=ON` and run the discovered tests through CMake's test integr
 
 The executable supports `--smoke-test` to load the interface and exit. On machines without a display, set `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`.
 
+`--benchmark report.json` records first-frame startup, resident memory, and app-process CPU using a temporary empty profile. See [performance measurements](./PERFORMANCE.md) for large-library query checks and measurement scope.
+
 ## Releases
 
 The [release workflow](./.github/workflows/release.yml) builds Linux and Windows packages on GitHub. A version tag such as `v1.0.1` must match the version in [CMakeLists.txt](./CMakeLists.txt). Packages are smoke-tested before the workflow publishes a GitHub release with checksums and corresponding application source.

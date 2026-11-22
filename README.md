@@ -27,6 +27,7 @@ Library scanning is manual. After adding or moving music on disk, use the scan b
 - **Song menus:** right-click a song or use **⋯** to play next, add to a queue or playlist, share, view information, or edit metadata.
 - **Favorites:** click the heart; a red heart marks a favorite. **Most Played** counts a play after at least half the song has been heard.
 - **Batch editing:** select songs with their checkboxes, then use the selection toolbar. Metadata and cover edits are written to the audio files.
+- **Moving from another player:** open **Settings → Library tools → Import from another player**. Preview an M3U/M3U8, PLS, XSPF, or WPL playlist, optionally match moved files in your music folder, and import the selected songs.
 - **Undo:** press **Ctrl+Z** to undo recent queue and playlist changes. File deletion and metadata writes are not covered by this undo.
 
 ## Make it yours
@@ -36,6 +37,10 @@ Open **Settings** to change the light/dark theme, text size, layout, keyboard sh
 In the player’s **More → Gapless / crossfade** menu, enable **Crossfade when skipping** to blend songs when pressing Next. It uses your fade duration and is off by default; automatic crossfade works as usual. If the next song is not buffered yet, it skips normally.
 
 ReplayGain uses existing loudness tags. Artist-credit splitting is optional. No automatic BPM/key analysis or startup library scan runs.
+
+**Settings → Laptop and performance** contains battery saver, pause-on-disconnect, optional resume after sleep, and local startup/RAM/CPU measurements. Playback integrates with Linux MPRIS or Windows media controls. High contrast and larger icon controls are available under **Display and layout**; songs and collections also support keyboard navigation.
+
+See [performance measurements](./PERFORMANCE.md) for the benchmark method and recorded results.
 
 ## Useful shortcuts
 

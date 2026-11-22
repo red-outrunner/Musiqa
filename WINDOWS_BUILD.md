@@ -9,7 +9,7 @@ Published packages are available from [Releases](https://github.com/red-outrunne
 
 ## Prerequisites
 
-- Visual Studio 2022 Build Tools with Desktop development with C++, Windows SDK,
+- Visual Studio 2022 Build Tools with Desktop development with C++, a Windows 10/11 SDK including C++/WinRT headers,
   CMake 3.21 or newer, and Ninja.
 - A Windows **MSVC 2022 x64 Qt 6** SDK (6.8.3 in CI), including Qt Quick,
   Quick Controls, Multimedia, SQL/SQLite, Network, SVG and development tools.
@@ -23,9 +23,9 @@ Published packages are available from [Releases](https://github.com/red-outrunne
   End users can play supported formats using Qt's deployed multimedia backend
   without the standalone FFmpeg executable.
 
-Do not mix MSVC and MinGW libraries or 32/64-bit SDKs. A matching MinGW Qt and
-TagLib toolchain can also compile the sources, but the included Windows CI
-and presets target MSVC x64.
+Use matching MSVC Qt and TagLib libraries with the same architecture. Native
+Windows media controls use the Windows SDK's C++/WinRT interfaces. The included
+Windows CI and presets validate MSVC x64.
 
 ## Build and package
 
