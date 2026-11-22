@@ -22,6 +22,6 @@ The executable supports `--smoke-test` to load the interface and exit. On machin
 
 ## Releases
 
-The [release workflow](./.github/workflows/release.yml) builds Linux and Windows packages on GitHub. A version tag such as `v1.0.0` must match the version in [CMakeLists.txt](./CMakeLists.txt). Packages are smoke-tested before the workflow publishes a GitHub release with checksums and corresponding application source.
+The [release workflow](./.github/workflows/release.yml) builds Linux and Windows packages on GitHub. A version tag such as `v1.0.1` must match the version in [CMakeLists.txt](./CMakeLists.txt). Packages are smoke-tested before the workflow publishes a GitHub release with checksums and corresponding application source.
 
 Builds and packages stay out of Git. The Linux package bundles its Qt/QML and TagLib runtime using linuxdeploy; the Windows package uses windeployqt. Dependency notices and source locations are included with the downloads.

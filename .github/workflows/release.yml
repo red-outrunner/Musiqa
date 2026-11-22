@@ -1,6 +1,8 @@
 name: Release builds
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -59,6 +61,11 @@ jobs:
         if: always() && steps.compile.outcome == 'success'
         run: |
           set -o pipefail
+          # Musica uses SQLite only. Other SDK SQL plugins can depend on
+          # proprietary client libraries that are absent from the runner.
+          test -f "$QT_ROOT_DIR/plugins/sqldrivers/libqsqlite.so"
+          mkdir -p "$RUNNER_TEMP/musica-unused-sql-drivers"
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -type f ! -name libqsqlite.so -exec mv {} "$RUNNER_TEMP/musica-unused-sql-drivers/" \;
           bash -x packaging/linux/package.sh build-linux 2>&1 | tee build-linux/package.log
       - uses: actions/upload-artifact@v4
         if: always() && steps.package.outcome == 'success'

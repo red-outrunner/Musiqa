@@ -519,7 +519,10 @@ ApplicationWindow {
             fileUrl: url
         };
     }
-    function playQueueItem(id, crossfadeOnSkip) {
+    function playQueueItem(id) {
+        playQueueEntry(id, false);
+    }
+    function playQueueEntry(id, crossfadeOnSkip) {
         const entry = queueItems.find(item => item.id === id);
         if (!entry)
             return;
@@ -802,7 +805,7 @@ ApplicationWindow {
                 return;
             index = 0;
         }
-        playQueueItem(queueItems[index].id, !automatic);
+        playQueueEntry(queueItems[index].id, !automatic);
     }
     function previousTrack() {
         if (player.position > 3000) {

@@ -45,6 +45,7 @@
 #include "mprisservice.h"
 #include "audiomixer.h"
 #include "filetags.h"
+#include "audiotestrequirements.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -318,6 +319,7 @@ private slots:
 
     void genresPageSupportsSortingMenusAndPlayback()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QFETCH(QSize, windowSize); QFETCH(double, textScale);
         const auto folder = m_temp.filePath("genres-ui");
         const QStringList tags{"Jazz", "jazz", "Rock", ""}; const QList<int> durations{20, 40, 120, 10};
@@ -376,7 +378,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(editor, "applyField", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, true)));
         QVERIFY(QMetaObject::invokeMethod(editor, "edit", Q_ARG(QVariant, QString("genre")), Q_ARG(QVariant, QString("Soul"))));
         click(window, "saveBatchMetadataButton"); QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 10000);
-        QCOMPARE(window->property("collectionName").toString(), QString("Soul")); QCOMPARE(library->songs()->count(), 2);
+        QTRY_COMPARE(window->property("collectionName").toString(), QString("Soul")); QCOMPARE(library->songs()->count(), 2);
         QCOMPARE(library->tracksForGroup("genre", "genre:jazz").size(), 0); QCOMPARE(library->tracksForGroup("genre", "genre:soul").size(), 2);
         QCOMPARE(window->property("queueCount").toInt(), 2); QVERIFY(!library->scanning());
         QMetaObject::invokeMethod(window, "goBack"); QTest::qWait(30); QCOMPARE(window->property("activePage").toString(), QString("Genres"));
@@ -642,6 +644,7 @@ private slots:
 
     void searchingWithSelectionsKeepsPlaybackAndModelsStable()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto path = m_temp.filePath("search-playback/Playing.wav"); QVERIFY(writeWave(path, 120));
         QVariantList snapshot;
         QStringList selected;
@@ -772,12 +775,13 @@ private slots:
         QCOMPARE(warnings.size(), 0);
         CacheManager manager; manager.setMemoryLimitMiB(8); QCOMPARE(manager.memoryLimitMiB(), 8);
         QSignalSpy revisions(&manager, &CacheManager::revisionChanged);
-        manager.clearThumbnails(); QTRY_VERIFY(!manager.busy()); QVERIFY(revisions.size() > 0);
+        manager.clearThumbnails(); QTRY_VERIFY(revisions.size() > 0); QVERIFY(!manager.busy());
         QCOMPARE(manager.memoryKiB(), 0);
     }
 
     void lazyScreensUnloadAndCustomShortcutsWork()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
         qml.load(QUrl("qrc:/main.qml")); QVERIFY(!qml.rootObjects().isEmpty());
@@ -1080,6 +1084,7 @@ private slots:
 
     void collectionContextMenusAndBatchEditorAreUsable()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         QStringList urls, paths;
         QList<QUrl> files;
@@ -1250,6 +1255,7 @@ private slots:
 
     void metadataEditorSavesPortableTagsAndCoverAndCancelDiscardsChanges()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto directory = m_temp.filePath("metadata-ui");
         const auto audio = directory + "/Original - Song.wav"; QVERIFY(writeWave(audio, 30, "Original", "Old album"));
         const auto url = QUrl::fromLocalFile(audio).toString();
@@ -1348,6 +1354,7 @@ private slots:
 
     void playbackContinuesWhileTheInterfaceSavesSettings()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto config = m_temp.filePath("playback-continuity.ini");
         const auto song = QUrl::fromLocalFile(m_temp.filePath("continuity/Long.wav"));
         QVERIFY(writeSignal(song.toLocalFile(), audioSignal(14, 11025), 11025));
@@ -1398,6 +1405,7 @@ private slots:
 
     void transitionsSeeksSleepAndSessionSavesSurviveABusyInterface()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto first = QUrl::fromLocalFile(m_temp.filePath("busy-interface/First.wav"));
         const auto second = QUrl::fromLocalFile(m_temp.filePath("busy-interface/Second.wav"));
         QVERIFY(writeWave(first.toLocalFile(), 2)); QVERIFY(writeWave(second.toLocalFile(), 4));
@@ -1443,6 +1451,7 @@ private slots:
 
     void realCrossfadeCountsBothSongsAndSleepPreventsAdvancing()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto config = m_temp.filePath("transitions.ini"); QSettings settings(config, QSettings::IniFormat); settings.setValue("library/folders", QStringList{}); settings.sync();
         const auto first = QUrl::fromLocalFile(m_temp.filePath("transitions/First.wav")), second = QUrl::fromLocalFile(m_temp.filePath("transitions/Second.wav"));
         QVERIFY(writeWave(first.toLocalFile(), 2)); QVERIFY(writeWave(second.toLocalFile(), 2));
@@ -1477,6 +1486,7 @@ private slots:
 
     void mainPlayerTransitionControlsWork()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{});
         settings.setValue("library/analysis", QVariantMap{{"old-file", QVariantMap{{"bpm", 120}}}});
         settings.setValue("playback/quantize", true); settings.sync();
@@ -1499,11 +1509,24 @@ private slots:
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
         QTest::qWait(60); click(window, "crossfadeSettingsButton"); QTest::qWait(60);
         QVERIFY(window->findChild<QObject *>("playbackOptions")->property("visible").toBool());
+        auto *skipFade = window->findChild<QObject *>("crossfadeOnSkipCheckBox"); QVERIFY(skipFade);
+        QVERIFY(!skipFade->property("checked").toBool()); QVERIFY(!skipFade->property("enabled").toBool());
         click(window, "crossfadeCheckBox"); QVERIFY(player->crossfadeEnabled());
+        QVERIFY(skipFade->property("enabled").toBool());
+        click(window, "crossfadeOnSkipCheckBox"); QVERIFY(player->crossfadeOnSkip());
         player->setCrossfadeSeconds(70); QTRY_COMPARE(window->findChild<QObject *>("crossfadeSecondsBox")->property("value").toInt(), 70);
         player->setCrossfadeSeconds(0); QCOMPARE(player->crossfadeSeconds(), 0.0);
+        QVERIFY(!skipFade->property("enabled").toBool());
+        player->setCrossfadeSeconds(2);
         window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-transition-controls.png");
         QMetaObject::invokeMethod(window->findChild<QObject *>("playbackOptions"), "close");
+        QTest::qWait(150); // The upcoming local file is prebuffered by the normal queue preparation.
+        const auto beforeSkip = player->entryId();
+        QVERIFY(QMetaObject::invokeMethod(window, "nextTrack", Q_ARG(QVariant, false)));
+        QVERIFY(player->entryId() != beforeSkip); QTRY_VERIFY(player->crossfading());
+        player->setCrossfadeOnSkip(false);
+        QVERIFY(QMetaObject::invokeMethod(window, "nextTrack", Q_ARG(QVariant, false)));
+        QVERIFY(!player->crossfading());
         click(window, "sleepTimerButton"); QTest::qWait(50);
         window->findChild<QObject *>("sleepMinutesBox")->setProperty("value", 1); click(window, "startSleepTimerButton");
         QVERIFY(player->sleepRemainingMs() > 58000 && player->sleepRemainingMs() <= 60000);
@@ -1579,6 +1602,7 @@ private slots:
     void closeButtonQuitsTheWholeApplication()
     {
         QFETCH(QString, mode);
+        if (mode != "main-idle") { MUSICA_REQUIRE_AUDIO_OUTPUT(); }
         const auto song = m_temp.filePath("closing/Long.wav"); QVERIFY(writeWave(song, 30));
         QProcess process;
         process.start(QCoreApplication::applicationDirPath() + "/musica_close_probe", {mode, song});
@@ -1865,6 +1889,7 @@ private slots:
 
     void albumPageQueuesTracksInReleaseOrder()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const QString root = m_temp.filePath("album-playback");
         const QString intro = root + "/Collective/Night Mix/20 Vale - Intro.wav";
         const QString zulu = root + "/Collective/Night Mix/10 Arlo - Zulu.wav";
@@ -2429,6 +2454,7 @@ private slots:
 
     void nowPlayingBlocksInputToCoveredTracks()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QFETCH(QString, kind);
         QStringList paths;
         for (int i = 1; i <= 8; ++i) {
@@ -2484,6 +2510,7 @@ private slots:
 
     void nowPlayingLinksMenusAndQueueRemoval()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings;
         settings.clear();
         settings.setValue("library/folders", QStringList{});
@@ -2599,6 +2626,7 @@ private slots:
 
     void realPlaybackQualifiesAtHalfAndSurvivesRestart()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings;
         settings.clear();
         settings.setValue("library/folders", QStringList{});
@@ -2679,6 +2707,7 @@ private slots:
 
     void libraryPlaybackCreatesNamedQueuesAndSavesPlaylists()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto first = m_temp.filePath("automatic-queue-ui/A/01 First.wav");
         const auto second = m_temp.filePath("automatic-queue-ui/A/02 Second.wav");
         const auto third = m_temp.filePath("automatic-queue-ui/B/01 Third.wav");
@@ -2862,6 +2891,7 @@ private slots:
 
     void artistLinksNavigateToTheArtistActuallyClicked()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         const auto path = m_temp.filePath("artist-links/Shared.wav");
         QVERIFY(writeWave(path, 30, "Artist A, Artist B; Artist C | Artist D", "Shared album"));
@@ -2939,6 +2969,7 @@ private slots:
 
     void sharingCopiesAudioAndCapturesNowPlayingWithoutChangingTheFile()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         const auto path = m_temp.filePath("share/Artist - Song.wav"); QVERIFY(writeWave(path, 30, "Artist", "Album"));
         const auto original = fileBytes(path);
         Sharing sharing; QSignalSpy ready(&sharing, &Sharing::ready), copied(&sharing, &Sharing::copied), exported(&sharing, &Sharing::exported), errors(&sharing, &Sharing::error);
@@ -2970,6 +3001,7 @@ private slots:
 
     void fourQueuesAndSeekControlsWorkInTheInterface()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         const auto first = m_temp.filePath("queue-bank-ui/First.wav"), second = m_temp.filePath("queue-bank-ui/Second.wav");
         QVERIFY(writeWave(first, 120)); QVERIFY(writeWave(second, 120));
@@ -3035,6 +3067,7 @@ private slots:
         auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
         auto *display = qobject_cast<DisplaySettings *>(window->property("displayPreferences").value<QObject *>());
         display->reset(); const auto restoreDisplay = qScopeGuard([display] { display->reset(); });
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
         window->resize(900, 640); QTest::qWait(60); window->requestActivate();
         auto *back = findItem(window->contentItem(), "backButton"); QVERIFY(back && back->isVisible()); QVERIFY(!back->isEnabled());
         // The persistent button remains available when the old page heading is hidden.
@@ -3053,7 +3086,10 @@ private slots:
         click(window, "navAlbums");
         auto *search = window->findChild<QObject *>("searchField"); search->setProperty("text", "Release");
         QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("Release"));
-        click(window, "searchCategory_album"); QTest::qWait(40);
+        QTRY_VERIFY(findItem(window->contentItem(), "searchCategory_album"));
+        auto *albumCategory = findItem(window->contentItem(), "searchCategory_album");
+        for (auto *ancestor = albumCategory; ancestor; ancestor = ancestor->parentItem()) ancestor->ensurePolished();
+        click(window, "searchCategory_album"); QTRY_COMPARE(window->property("searchCategory").toString(), QString("album"));
         auto *grid = findItem(window->contentItem(), "searchResultsList"); QVERIFY(grid); QTRY_COMPARE(grid->property("count").toInt(), 60);
         QMetaObject::invokeMethod(grid, "positionViewAtEnd"); QTRY_VERIFY(grid->property("atYEnd").toBool());
         const auto offset = grid->property("contentY").toReal() - grid->property("originY").toReal();
@@ -3100,6 +3136,7 @@ private slots:
 
     void popupButtonsToggleAndFullscreenNowPlayingRestoresTheWindow()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         const auto song = m_temp.filePath("navigation-playing/Artist - Song.wav"); QVERIFY(writeWave(song, 120, "Artist", "Album", 1));
         QQmlApplicationEngine qml; QSignalSpy warnings(&qml, &QQmlApplicationEngine::warnings);
@@ -3193,6 +3230,7 @@ private slots:
 
     void queueBrowsingSurvivesRemovalAndCanJumpToCurrentSong()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QFETCH(double, textScale); QFETCH(QSize, windowSize);
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         const auto first = m_temp.filePath("queue-browsing/First.wav");
@@ -3335,6 +3373,7 @@ private slots:
 
     void shuffledQueueDragAndResumePreserveEntryIdentity()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings; settings.clear(); settings.setValue("library/folders", QStringList{}); settings.sync();
         QStringList paths;
         for (const auto &name : {"Alpha", "Beta", "Gamma"}) {
@@ -3471,6 +3510,7 @@ private slots:
 
     void linuxDesktopControlsUseMpris()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
 #if MUSICA_HAS_DBUS
         const auto daemon = QStandardPaths::findExecutable("dbus-daemon");
         QVERIFY2(!daemon.isEmpty(), "dbus-daemon is required for the isolated MPRIS integration check");
@@ -3523,6 +3563,7 @@ private slots:
 
     void interfaceSearchPlaybackAndQueue()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QSettings settings;
         settings.clear();
         settings.setValue("library/folders", QStringList{});

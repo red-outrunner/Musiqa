@@ -6,6 +6,7 @@
 #include "tracklibrary.h"
 #include "librarymaintenance.h"
 #include "lyricsdocument.h"
+#include "audiotestrequirements.h"
 
 #include <QAudioOutput>
 #include <QDataStream>
@@ -710,6 +711,7 @@ private slots:
 
     void undoQueueSearchAndAdvancedFiltersWorkTogether()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QVERIFY(seedLibrary()); QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
         auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);
@@ -854,6 +856,7 @@ private slots:
     }
     void undoingTheOnlyQueuedSongStopsAndClearsPlayback()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QVERIFY(seedLibrary()); QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
         auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);
@@ -921,6 +924,7 @@ private slots:
 
     void offlineLyricsOpenForAnotherSongAndCanSeek()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QVERIFY(seedLibrary());
         const auto song = m_musicRoot + "/Artist/Album/First.wav";
         QFile lyrics(m_musicRoot + "/Artist/Album/First.lrc"); QVERIFY(lyrics.open(QIODevice::WriteOnly));
@@ -942,6 +946,7 @@ private slots:
     }
     void externalFilesPlayOrAppendWithoutRescanning()
     {
+        MUSICA_REQUIRE_AUDIO_OUTPUT();
         QVERIFY(seedLibrary()); QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
         auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
         auto *library = window->findChild<TrackListModel *>("library"); auto *player = window->findChild<PlaybackEngine *>("player"); QVERIFY(library && player);

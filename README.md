@@ -1,4 +1,4 @@
-# Musica 1.0.0
+# Musica 1.0.1
 
 An offline music player for your own music collection, created by **weo sikho fuzile**.
 
@@ -7,7 +7,7 @@ An offline music player for your own music collection, created by **weo sikho fu
 ## Download and open
 
 - **Windows 10/11, Intel or AMD 64-bit:** download the Windows ZIP, extract the whole folder, then open `bin/musicplayer.exe`. Keep the DLLs and folders beside it. Install the [Microsoft Visual C++ x64 runtime](https://aka.ms/vs/17/release/vc_redist.x64.exe) if Windows asks for it.
-- **Linux:** the portable package is still being prepared. If you have already built the app, run `./build/musicplayer` from the project folder. See [building from source](./BUILDING.md) for dependencies.
+- **Linux, Intel or AMD 64-bit:** download the Linux archive, extract it, and run `./Musica` inside the extracted folder. See [building from source](./BUILDING.md) if you prefer to compile it yourself.
 
 Choose a built package under **Assets**. The automatic “Source code” downloads are for developers. ARM builds are not provided yet.
 
@@ -32,6 +32,8 @@ Library scanning is manual. After adding or moving music on disk, use the scan b
 ## Make it yours
 
 Open **Settings** to change the light/dark theme, text size, layout, keyboard shortcuts, and audio output. Optional controls include crossfade from **0–70 seconds**, gapless playback, a sleep timer, mono/stereo, and a **5–15 band equalizer**.
+
+In the player’s **More → Gapless / crossfade** menu, enable **Crossfade when skipping** to blend songs when pressing Next. It uses your fade duration and is off by default; automatic crossfade works as usual. If the next song is not buffered yet, it skips normally.
 
 ReplayGain uses existing loudness tags. Artist-credit splitting is optional. No automatic BPM/key analysis or startup library scan runs.
 

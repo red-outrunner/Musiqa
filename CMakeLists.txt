@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MusicPlayerApp VERSION 1.0.0 LANGUAGES CXX)
+project(MusicPlayerApp VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
