@@ -284,7 +284,10 @@ QStringList LibraryDatabase::ids(const QString &kind, const LibraryQuery &filter
     if (!filter.search.trimmed().isEmpty()) { statement += " AND instr(search,?)>0"; values.append(folded(filter.search.trimmed())); }
     if (kind == "song") statement += SearchFilters::sql(filter.filters, &values);
     if (!filter.collectionId.isEmpty()) {
-        if (filter.collectionKind == "smart") {
+        if (kind == "album" && filter.collectionKind == "artist") {
+            statement += " AND id IN (SELECT a.groupid FROM membership a JOIN membership b ON a.songid=b.songid WHERE a.kind='album' AND b.kind='artist' AND b.groupid=?)";
+            values.append(filter.collectionId);
+        } else if (filter.collectionKind == "smart") {
             if (filter.collectionId == "never") statement += " AND plays=0";
             else if (filter.collectionId == "rare") statement += " AND plays BETWEEN 1 AND 4";
             else if (filter.collectionId == "recent") { statement += " AND added>=?"; values.append(QDateTime::currentMSecsSinceEpoch() - 30LL * 86400000); }

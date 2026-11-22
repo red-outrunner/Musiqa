@@ -23,12 +23,19 @@ QVariantMap checkedState(const QVariantMap &input)
         }
         bool valid = false; clean["filters"] = SearchFilters::normalized(page.value("filters").toMap(), &valid); if (!valid) return {};
         QVariantMap scroll;
-        for (const auto &key : {"outer", "groups", "songs", "songsX"}) {
+        for (const auto &key : {"outer", "groups", "songs", "songsX", "results", "artistAlbums"}) {
             const auto value = page.value("scroll").toMap().value(key, 0).toDouble();
             if (!std::isfinite(value)) return {};
             scroll[key] = qBound(0.0, value, 1e9);
         }
-        clean["scroll"] = scroll; accepted[it.key()] = clean;
+        clean["scroll"] = scroll;
+        const auto category = page.value("searchCategory").toString();
+        if (QStringList{"song", "album", "artist", "genre"}.contains(category)) clean["searchCategory"] = category;
+        const auto expanded = page.value("expandedArtistAlbums").toStringList();
+        if (expanded.size() > 500) return {};
+        for (const auto &id : expanded) if (id.size() > 8192 || id.contains(QChar::Null)) return {};
+        clean["expandedArtistAlbums"] = expanded;
+        accepted[it.key()] = clean;
     }
     result["version"] = 1; result["pages"] = accepted;
     const auto last = input.value("lastKey").toString(); if (accepted.contains(last)) result["lastKey"] = last;
@@ -38,6 +45,10 @@ QVariantMap checkedState(const QVariantMap &input)
     }
     for (const auto &key : {"albumSortDescending", "artistSortDescending", "genreSortDescending"}) result[key] = input.value(key).toBool();
     for (const auto &key : {"albumViewStyle", "artistViewStyle"}) result[key] = input.value(key).toString() == "list" ? "list" : "grid";
+    result["artworkSize"] = qBound(150, input.value("artworkSize", 220).toInt(), 320);
+    result["sidebarSize"] = qBound(160, input.value("sidebarSize", 222).toInt(), 340);
+    result["sidebarCollapsed"] = input.value("sidebarCollapsed").toBool();
+    result["artistAlbumView"] = input.value("artistAlbumView", true).toBool();
     return result;
 }
 }

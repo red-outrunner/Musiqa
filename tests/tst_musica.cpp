@@ -209,6 +209,10 @@ class MusicaTests : public QObject
 
     static void click(QQuickWindow *window, const QString &name)
     {
+        if (QStringList{"crossfadeSettingsButton", "sleepTimerButton", "audioSettingsButton"}.contains(name)) {
+            auto *menu = window->findChild<QObject *>("playerMoreMenu");
+            if (!menu || !menu->property("visible").toBool()) { click(window, "playerMoreButton"); QTest::qWait(30); }
+        }
         auto *item = findItem(window->contentItem(), name);
         QVERIFY2(item, qPrintable(name));
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
@@ -667,16 +671,18 @@ private slots:
             window->setProperty("selectedUrls", selected);
             for (const auto &query : {"N", "Ne", "Needle", "Needle 1", "missing", "", "Other", "", "Artist 2", ""}) {
                 search->setProperty("text", query); QTest::qWait(5); qml.collectGarbage();
-                auto *view = QString(page) == "Most Played" ? library->mostPlayed() : library->songs();
+                if (QString(query).size()) QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString(query));
+                auto *view = qobject_cast<LibraryViewModel *>(window->property("visibleTracks").value<QObject *>()); QVERIFY(view);
                 QCOMPARE(window->property("selectedVisibleCount").toInt(), view->count());
                 QVERIFY(view->cachedEntryCount() <= 192);
                 QCOMPARE(window->property("currentQueueId"), playingId);
             }
         }
         QMetaObject::invokeMethod(window, "navigate", Q_ARG(QVariant, QString("Songs")));
-        window->setProperty("selectedUrls", selected); search->setProperty("text", "Needle"); QTest::qWait(30);
+        window->setProperty("selectedUrls", selected); search->setProperty("text", "Needle");
+        QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("Needle"));
         QCOMPARE(window->property("selectedVisibleCount").toInt(), 600);
-        click(window, "selectAllSongs"); QCOMPARE(window->property("selectedVisibleCount").toInt(), 0);
+        click(window, "selectAllSearchSongs"); QCOMPARE(window->property("selectedVisibleCount").toInt(), 0);
         QCOMPARE(window->property("selectedCount").toInt(), 600);
         search->setProperty("text", ""); QTest::qWait(20);
         QCOMPARE(window->property("selectedVisibleCount").toInt(), 600);
@@ -869,7 +875,7 @@ private slots:
                 && bounds.bottom() <= window->height() + 1 && item->width() > 0 && item->height() > 0;
         };
         for (const auto &name : {"displaySettingsButton", "nowPlayingCoverButton", "playPauseButton", "previousButton", "nextButton",
-                 "queueButton", "crossfadeSettingsButton", "sleepTimerButton", "audioSettingsButton", "volumeSlider", "progressSlider"}) {
+                 "queueButton", "playerMoreButton", "volumeSlider", "progressSlider"}) {
             auto *control = findItem(window->contentItem(), name); QVERIFY2(control, name);
             QVERIFY2(insideWindow(control), qPrintable(QString("%1 is outside %2×%3 at %4% text").arg(name).arg(size.width()).arg(size.height()).arg(scale * 100)));
         }
@@ -1512,6 +1518,8 @@ private slots:
         player->cancelSleep(); player->setCrossfadeEnabled(false);
         window->resize(900, 640); QTest::qWait(60); click(window, "crossfadeSettingsButton"); QTest::qWait(60);
         QVERIFY(findItem(window->contentItem(), "crossfadeSecondsBox")->mapToScene(QPointF()).y() >= 0);
+        QMetaObject::invokeMethod(window->findChild<QObject *>("playbackOptions"), "close");
+        click(window, "playerMoreButton"); QTest::qWait(40);
         for (const auto &name : {"crossfadeSettingsButton", "sleepTimerButton", "audioSettingsButton"}) {
             auto *button = findItem(window->contentItem(), name); QVERIFY(button);
             const auto point = button->mapToScene(QPointF()); QVERIFY(point.x() >= 0 && point.x() + button->width() <= window->width());
@@ -3043,21 +3051,25 @@ private slots:
         QCOMPARE(window->property("activePage").toString(), QStringLiteral("Overview")); QVERIFY(!back->isEnabled());
 
         click(window, "navAlbums");
-        auto *search = window->findChild<QObject *>("searchField"); search->setProperty("text", "Release"); QTest::qWait(70);
-        auto *grid = findItem(window->contentItem(), "groupGrid"); QVERIFY(grid);
+        auto *search = window->findChild<QObject *>("searchField"); search->setProperty("text", "Release");
+        QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("Release"));
+        click(window, "searchCategory_album"); QTest::qWait(40);
+        auto *grid = findItem(window->contentItem(), "searchResultsList"); QVERIFY(grid); QTRY_COMPARE(grid->property("count").toInt(), 60);
         QMetaObject::invokeMethod(grid, "positionViewAtEnd"); QTRY_VERIFY(grid->property("atYEnd").toBool());
         const auto offset = grid->property("contentY").toReal() - grid->property("originY").toReal();
         QVERIFY(offset > grid->height());
-        click(window, "groupCard59"); QTest::qWait(50);
+        QTRY_VERIFY(findItem(window->contentItem(), "searchGroup59")); click(window, "searchGroup59"); QTest::qWait(50);
         QCOMPARE(window->property("collectionName").toString(), QStringLiteral("Release 59"));
         click(window, "backButton"); QTRY_VERIFY(window->property("collectionName").toString().isEmpty());
         QCOMPARE(window->property("searchQuery").toString(), QStringLiteral("Release"));
+        QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList")); grid = findItem(window->contentItem(), "searchResultsList");
         QTRY_VERIFY(std::abs(grid->property("contentY").toReal() - grid->property("originY").toReal() - offset) < 1);
         QVERIFY(grid->property("atYEnd").toBool());
-        click(window, "groupCard59"); QTest::qWait(50);
+        QTRY_VERIFY(findItem(window->contentItem(), "searchGroup59")); click(window, "searchGroup59"); QTest::qWait(50);
         const auto albumId = window->property("collectionId").toString();
-        search->setProperty("text", "Song"); window->setProperty("sortBy", "Artist"); QTest::qWait(50);
-        auto *songs = findItem(window->contentItem(), "songList"); QVERIFY(songs);
+        search->setProperty("text", "Song"); window->setProperty("sortBy", "Artist");
+        QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("Song"));
+        auto *songs = findItem(window->contentItem(), "searchResultsList"); QVERIFY(songs); QTRY_COMPARE(songs->property("count").toInt(), 600);
         QMetaObject::invokeMethod(songs, "positionViewAtEnd"); QTest::qWait(40);
         const auto songOffset = songs->property("contentY").toReal() - songs->property("originY").toReal();
         const auto track = library->songs()->get(0);
@@ -3068,6 +3080,8 @@ private slots:
         QCOMPARE(window->property("searchQuery").toString(), QStringLiteral("Song"));
         QCOMPARE(window->property("sortBy").toString(), QStringLiteral("Artist"));
         QCOMPARE(library->songs()->count(), 10);
+        QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList")); songs = findItem(window->contentItem(), "searchResultsList");
+        QTRY_COMPARE(songs->property("count").toInt(), 600);
         // Allow fractional item/layout rounding while retaining the same songs.
         QTRY_VERIFY_WITH_TIMEOUT(std::abs(songs->property("contentY").toReal() - songs->property("originY").toReal() -
             std::min(songOffset, songs->property("contentHeight").toReal() - songs->height())) <= 3, 1000);
@@ -3104,7 +3118,9 @@ private slots:
             auto *popup = window->findChild<QObject *>(pair.second); QVERIFY(popup);
             for (int repeat = 0; repeat < 2; ++repeat) {
                 click(window, pair.first); QTRY_VERIFY(popup->property("visible").toBool());
-                click(window, pair.first); QTRY_VERIFY(!popup->property("visible").toBool());
+                if (QString(pair.first) == "queueButton") click(window, pair.first);
+                else QMetaObject::invokeMethod(popup, "close");
+                QTRY_VERIFY(!popup->property("visible").toBool());
                 QTest::qWait(50); QVERIFY(!popup->property("visible").toBool());
             }
         }

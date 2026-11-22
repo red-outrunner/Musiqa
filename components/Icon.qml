@@ -8,6 +8,7 @@ Item {
     property bool filled: false
     property real strokeWidth: 1.7
     readonly property var paths: ({
+            sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
             up: '<path d="m5 15 7-7 7 7"/>',
             down: '<path d="m5 9 7 7 7-7"/>',
             columns: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',

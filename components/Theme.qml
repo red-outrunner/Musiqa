@@ -16,6 +16,7 @@ QtObject {
     readonly property color input: light ? "#f2f8f9" : "#102127"
     readonly property color hover: Qt.tint(light ? "#e3f1f2" : "#20353b", Qt.rgba(accent.r, accent.g, accent.b, 0.08))
     readonly property color selected: Qt.tint(light ? "#c9e8e9" : "#24464c", Qt.rgba(accent.r, accent.g, accent.b, 0.16))
+    readonly property color playing: Qt.tint(background, Qt.rgba(accent.r, accent.g, accent.b, 0.08))
     readonly property color text: light ? "#142f35" : "#e5f2f4"
     readonly property color secondary: light ? "#3e626b" : "#b0cbd1"
     readonly property color muted: light ? "#526f78" : "#8ba8b1"

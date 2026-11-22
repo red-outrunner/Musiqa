@@ -769,6 +769,12 @@ void TrackListModel::publishUpdates()
                     {QStringLiteral("trackCount"), 0}});
             }
             auto &group = found.value();
+            if (kind == "album") {
+                auto credits = group.value("artistIds").toStringList();
+                for (const auto &artistId : track.value("artistIds").toStringList()) if (!credits.contains(artistId)) credits.append(artistId);
+                group["artistIds"] = credits;
+                if (group.value("year").toString().isEmpty()) group["year"] = track.value("year");
+            }
             group[QStringLiteral("trackCount")] = group.value(QStringLiteral("trackCount")).toInt() + 1;
             group[QStringLiteral("duration")] = group.value(QStringLiteral("duration")).toLongLong()
                 + qMax<qint64>(0, track.value(QStringLiteral("duration")).toLongLong());

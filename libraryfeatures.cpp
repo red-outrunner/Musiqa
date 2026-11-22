@@ -18,6 +18,39 @@ QString cleanName(const QString &name) { return name.simplified().left(80); }
 QString newAlbumId() { return QStringLiteral("manual:") + QUuid::createUuid().toString(QUuid::WithoutBraces); }
 }
 
+LibraryViewModel *TrackListModel::createCollectionView(const QString &kind, QObject *owner)
+{
+    auto *source = kind == "song" ? &m_songEntries : kind == "album" ? &m_albumEntries
+        : kind == "artist" ? &m_artistEntries : kind == "genre" ? &m_genreEntries : nullptr;
+    if (!source || !owner) return nullptr;
+    auto *view = new LibraryViewModel(owner);
+    view->setSourceModel(source);
+    view->setSortKey(kind == "song" ? "title" : "name");
+    if (m_database->valid()) view->setDatabase(m_database.get(), kind);
+    return view;
+}
+
+QVariantList TrackListModel::artistAlbumTracks(const QString &artistId, const QString &albumId) const
+{
+    if (artistId.isEmpty() || albumId.isEmpty()) return {};
+    if (m_database->valid()) {
+        LibraryQuery filter; filter.collectionKind = "artist"; filter.collectionId = artistId;
+        const auto artistUrls = m_database->ids("song", filter);
+        const QSet<QString> members(artistUrls.cbegin(), artistUrls.cend());
+        filter.collectionKind = "album"; filter.collectionId = albumId; filter.sort = "track";
+        auto urls = m_database->ids("song", filter);
+        urls.removeIf([&](const QString &url) { return !members.contains(url); });
+        return m_database->page("song", urls, 0, urls.size());
+    }
+    auto tracks = tracksForGroup("artist", artistId);
+    tracks.removeIf([&](const QVariant &entry) { return entry.toMap().value("albumId").toString() != albumId; });
+    auto collator = libraryCollator();
+    std::stable_sort(tracks.begin(), tracks.end(), [&](const QVariant &a, const QVariant &b) {
+        return collator.compare(a.toMap().value("trackSort").toString(), b.toMap().value("trackSort").toString()) < 0;
+    });
+    return tracks;
+}
+
 QVariantList TrackListModel::albumOptions() const
 {
     QVariantList rows;

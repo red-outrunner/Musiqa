@@ -27,6 +27,26 @@ class LibraryUsabilityTests : public QObject
         settings.setValue("library/snapshot", fixtureTracks(root)); settings.sync();
     }
 private slots:
+    void collectionViewsSearchGloballyAndFindAnArtistsAlbumsWithoutScanning()
+    {
+        QTemporaryDir temp; const auto file = temp.filePath("library.ini"); seed(file);
+        { TrackListModel migrate(file, false); }
+        TrackListModel library(file, false); QObject owner;
+        auto *songs = library.createCollectionView("song", &owner);
+        auto *albums = library.createCollectionView("album", &owner);
+        QVERIFY(songs && albums); QCOMPARE(songs->count(), 3);
+        library.songs()->setFavoritesOnly(true); QCOMPARE(library.songs()->count(), 0);
+        songs->setSearch("BJÖRK"); QCOMPARE(songs->count(), 1);
+        const auto track = songs->get(0);
+        const auto artistId = track.value("artistIds").toStringList().first();
+        albums->setCollectionKind("artist"); albums->setCollectionId(artistId); QCOMPARE(albums->count(), 1);
+        const auto entries = library.artistAlbumTracks(artistId, albums->get(0).value("id").toString());
+        QCOMPARE(entries.size(), 1); QCOMPARE(entries.first().toMap().value("fileUrl"), track.value("fileUrl"));
+        QVERIFY(!library.createCollectionView("invalid", &owner)); QVERIFY(!library.createCollectionView("song", nullptr));
+        QVERIFY(library.artistAlbumTracks("unknown", "unknown").isEmpty());
+        QCOMPARE(library.residentTrackCount(), 0); QVERIFY(!library.scanning());
+    }
+
     void metadataSuggestionsUseSavedNamesWithoutScanningOrLoadingSongs()
     {
         QTemporaryDir temp; QVERIFY(temp.isValid()); const auto file = temp.filePath("library.ini"); seed(file);

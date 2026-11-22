@@ -56,6 +56,18 @@ ApplicationWindow {
     property string collectionArtist: ""
     property string collectionId: ""
     property string searchQuery: ""
+    readonly property bool searching: searchQuery.trim().length > 0
+    property string appliedSearchQuery: ""
+    property string searchCategory: "song"
+    property var searchReturnScroll: null
+    property real pendingSearchOffset: -1
+    property int artworkSize: 220
+    property int sidebarSize: 222
+    property bool sidebarCollapsed: false
+    readonly property bool sidebarCompact: narrowLayout || sidebarCollapsed
+    property bool artistAlbumView: true
+    property var expandedArtistAlbums: []
+    readonly property bool artistAlbumsVisible: collectionKind === "artist" && !!collectionName && artistAlbumView && !searching
     property var songFilters: ({})
     readonly property int activeFilterCount: Object.keys(songFilters).length
     readonly property var visibleSongColumns: Theme.preferences.songColumns.filter(column => column.visible && (!narrowLayout || column.key !== "album" || Theme.preferences.columnsCustomized))
@@ -151,7 +163,7 @@ ApplicationWindow {
     readonly property var albums: library.albums
     readonly property var artists: library.artists
     readonly property int favoriteCount: library.favoriteCount
-    readonly property var visibleTracks: activePage === "Most Played" ? library.mostPlayed : library.songs
+    readonly property var visibleTracks: searching && searchResultsLoader.item ? searchResultsLoader.item.songs : activePage === "Most Played" ? library.mostPlayed : library.songs
     readonly property var visibleGroups: activePage === "Artists" ? artists : activePage === "Genres" ? library.genres : activePage === "Playlists" ? library.playlists : albums
     readonly property string pageTitle: collectionName || (activePage === "Songs" ? "All songs" : activePage)
     readonly property string folderPath: activePage === "Folders" && collectionKind === "folder" ? collectionId : ""
@@ -232,13 +244,18 @@ ApplicationWindow {
     }
 
     function pageSnapshot() {
+        const scroll = searching && searchReturnScroll ? Object.assign({}, searchReturnScroll) : {
+            outer: contentScroll.contentY - contentScroll.originY, groups: groupGrid.contentY - groupGrid.originY,
+            songs: songList.contentY - songList.originY, songsX: songList.contentX - songList.originX};
+        scroll.results = searchResultsLoader.item ? searchResultsLoader.item.scrollPosition : 0;
+        scroll.artistAlbums = artistAlbumsLoader.item ? artistAlbumsLoader.item.scrollPosition : 0;
         return {
             page: activePage, kind: collectionKind, id: collectionId, name: collectionName, artist: collectionArtist,
-            search: searchQuery, filters: songFilters, sort: sortBy, selection: selectedUrls.slice(), nowPlaying: nowPlayingOpen,
-            scroll: {outer: contentScroll.contentY - contentScroll.originY,
-                groups: groupGrid.contentY - groupGrid.originY, songs: songList.contentY - songList.originY, songsX: songList.contentX - songList.originX}
+            search: searchQuery, searchCategory: searchCategory, expandedArtistAlbums: expandedArtistAlbums.slice(), filters: songFilters, sort: sortBy, selection: selectedUrls.slice(), nowPlaying: nowPlayingOpen,
+            scroll: scroll
         };
     }
+    function scheduleViewSave() { if (viewPreferencesLoaded && !restoringNavigation) viewSaveTimer.restart(); }
     function rememberPage() {
         cacheCurrentPage();
         if (!restoringNavigation) navigationHistory = navigationHistory.slice(-99).concat([pageSnapshot()]);
@@ -259,12 +276,14 @@ ApplicationWindow {
             albumSortKey: albumSortKey, albumSortDescending: albumSortDescending,
             artistSortKey: artistSortKey, artistSortDescending: artistSortDescending,
             genreSortKey: genreSortKey, genreSortDescending: genreSortDescending,
-            albumViewStyle: albumViewStyle, artistViewStyle: artistViewStyle});
+            albumViewStyle: albumViewStyle, artistViewStyle: artistViewStyle,
+            artworkSize: artworkSize, sidebarSize: sidebarSize, sidebarCollapsed: sidebarCollapsed, artistAlbumView: artistAlbumView});
     }
     function applyPageState(page) {
         activePage = page.page; collectionKind = page.kind || ""; collectionId = page.id || "";
         collectionName = page.name || ""; collectionArtist = page.artist || "";
-        sortBy = page.sort || "Title"; searchField.text = page.search || ""; songFilters = page.filters || {};
+        expandedArtistAlbums = page.expandedArtistAlbums || [];
+        sortBy = page.sort || "Title"; searchCategory = page.searchCategory || "song"; searchField.text = page.search || ""; songFilters = page.filters || {};
     }
     function restorePagePreferences() {
         if (viewPreferencesLoaded) return;
@@ -275,6 +294,8 @@ ApplicationWindow {
         artistSortKey = saved.artistSortKey || "name"; artistSortDescending = !!saved.artistSortDescending;
         genreSortKey = saved.genreSortKey || "name"; genreSortDescending = !!saved.genreSortDescending;
         albumViewStyle = saved.albumViewStyle || "grid"; artistViewStyle = saved.artistViewStyle || "grid";
+        artworkSize = saved.artworkSize || 220; sidebarSize = saved.sidebarSize || 222;
+        sidebarCollapsed = !!saved.sidebarCollapsed; artistAlbumView = saved.artistAlbumView !== false;
         const page = savedPages[saved.lastKey];
         if (page) applyPageState(page);
         restoringNavigation = false; viewPreferencesLoaded = true;
@@ -283,6 +304,8 @@ ApplicationWindow {
     function restorePageScroll(positions) {
         const revision = ++navigationRevision;
         const saved = positions || {};
+        pendingSearchOffset = saved.results || 0;
+        if (searchQuery.trim()) searchReturnScroll = saved;
         Qt.callLater(function() {
             if (revision !== win.navigationRevision) return;
             groupGrid.forceLayout(); songList.forceLayout();
@@ -293,16 +316,18 @@ ApplicationWindow {
                 view.contentY = view.originY + Math.max(0, Math.min(maximum, pair[1]));
             }
             songList.contentX = songList.originX + Math.max(0, Math.min(songList.contentWidth - songList.width, saved.songsX || 0));
+            if (artistAlbumsLoader.item) artistAlbumsLoader.item.scrollPosition = saved.artistAlbums || 0;
         });
     }
     function visitPage(page, group) {
         const kind = group ? (group.kind || (page === "Artists" ? "artist" : page === "Genres" ? "genre" : page === "Playlists" ? "playlist" : "album")) : "";
-        if (!group && page === activePage && !collectionName && !nowPlayingOpen) return;
+        if (!group && page === activePage && !collectionName && !nowPlayingOpen && !searching) return;
         rememberPage();
         restoringNavigation = true;
         closeNowPlaying();
         queueOpen = false;
         selectedUrls = [];
+        expandedArtistAlbums = [];
         songFilters = ({});
         activePage = page;
         collectionKind = kind;
@@ -332,6 +357,8 @@ ApplicationWindow {
         collectionKind = previous.kind; collectionId = previous.id;
         collectionName = previous.name; collectionArtist = previous.artist;
         sortBy = previous.sort;
+        expandedArtistAlbums = previous.expandedArtistAlbums || [];
+        searchCategory = previous.searchCategory || "song";
         searchField.text = previous.search;
         songFilters = previous.filters || {};
         selectedUrls = previous.selection.filter(url => !!library.trackForUrl(url).fileUrl);
@@ -975,11 +1002,30 @@ ApplicationWindow {
         sessionSave.restart(); prepareTimer.restart();
         queueEntries.synchronize(queueItems);
     }
-    onCurrentQueueIdChanged: { sessionSave.restart(); prepareTimer.restart(); }
+    onCurrentQueueIdChanged: { sessionSave.restart(); prepareTimer.restart(); queueEntries.synchronize(queueItems); }
     onRepeatModeChanged: { sessionSave.restart(); prepareTimer.restart(); }
     onMutedChanged: sessionSave.restart()
-    onSearchQueryChanged: if (!restoringNavigation) restorePageScroll({})
-    onSongFiltersChanged: if (!restoringNavigation) restorePageScroll({})
+    onSearchQueryChanged: {
+        searchDelay.stop();
+        if (!restoringNavigation) pendingSearchOffset = -1;
+        if (searchQuery.trim().length) searchDelay.restart();
+        else {
+            appliedSearchQuery = "";
+            if (!restoringNavigation && searchReturnScroll) restorePageScroll(searchReturnScroll);
+            searchReturnScroll = null;
+        }
+    }
+    onArtworkSizeChanged: viewSaveTimer.restart()
+    onSidebarSizeChanged: viewSaveTimer.restart()
+    onSidebarCollapsedChanged: viewSaveTimer.restart()
+    onArtistAlbumViewChanged: viewSaveTimer.restart()
+    onExpandedArtistAlbumsChanged: viewSaveTimer.restart()
+    onSongFiltersChanged: if (!restoringNavigation) {
+        if (searchQuery.trim()) {
+            pendingSearchOffset = -1;
+            if (searchResultsLoader.item) searchResultsLoader.item.resetScroll();
+        } else restorePageScroll({});
+    }
     onNowPlayingOpenChanged: if (!nowPlayingOpen) leaveFullscreenNowPlaying()
     onCurrentTrackChanged: Theme.preferences.setArtwork(currentTrack && currentTrack.artwork ? currentTrack.artwork : "")
     onShuffleEnabledChanged: {
@@ -998,6 +1044,21 @@ ApplicationWindow {
     }
     Timer { id: sessionSave; interval: 400; onTriggered: win.persistSession() }
     Timer { id: viewSaveTimer; interval: 500; onTriggered: win.savePagePreferences() }
+    Timer {
+        id: searchDelay; interval: 100
+        onTriggered: {
+            win.appliedSearchQuery = win.searchQuery.trim();
+            if (searchResultsLoader.item) {
+                searchResultsLoader.item.resetScroll();
+                const offset = win.pendingSearchOffset, query = win.appliedSearchQuery, category = win.searchCategory;
+                if (offset >= 0) Qt.callLater(function() {
+                    if (searchResultsLoader.item && query === win.appliedSearchQuery && category === win.searchCategory)
+                        searchResultsLoader.item.restoreScroll(offset);
+                });
+            }
+            win.pendingSearchOffset = -1;
+        }
+    }
     Timer { id: prepareTimer; interval: 40; onTriggered: win.prepareNextTrack() }
     Timer {
         id: queueSearchTimer; interval: 150
@@ -1610,7 +1671,7 @@ ApplicationWindow {
         id: sidebar
         objectName: "sidebar"
         visible: !win.fullscreenNowPlaying
-        width: Theme.dp(win.narrowLayout ? 68 : 222)
+        width: win.sidebarCompact ? Theme.dp(68) : Math.min(Theme.dp(win.sidebarSize), win.width * 0.36)
         anchors {
             left: parent.left
             top: parent.top
@@ -1625,7 +1686,7 @@ ApplicationWindow {
         }
 
         Row {
-            x: Theme.dp(win.narrowLayout ? 13 : 26)
+            x: Theme.dp(win.sidebarCompact ? 13 : 26)
             y: Theme.dp(35)
             spacing: Theme.gap(10)
             Image {
@@ -1639,7 +1700,7 @@ ApplicationWindow {
             Text {
                 objectName: "appWordmark"
                 text: "musica."
-                visible: !win.narrowLayout
+                visible: !win.sidebarCompact
                 color: win.textColor
                 font.family: Theme.preferences.fontFamily; font.pointSize: Theme.preferences.fontPointSize * 26 / 12
                 font.weight: Font.Bold
@@ -1651,7 +1712,7 @@ ApplicationWindow {
             x: Theme.dp(27)
             y: Theme.dp(109)
             text: "LIBRARY"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
             color: Theme.muted
             font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)
             font.weight: Font.DemiBold
@@ -1661,9 +1722,9 @@ ApplicationWindow {
             id: sidebarScroll
             objectName: "sidebarScroll"
             x: Theme.dp(14)
-            y: Theme.dp(win.narrowLayout ? 96 : 139)
+            y: Theme.dp(win.sidebarCompact ? 96 : 139)
             width: parent.width - 28
-            height: Math.max(0, parent.height - y - Theme.dp(win.narrowLayout ? 16 : 58))
+            height: Math.max(0, parent.height - y - Theme.dp(win.sidebarCompact ? 16 : 58))
             contentWidth: width
             contentHeight: sidebarNavigation.height
             clip: true
@@ -1714,7 +1775,7 @@ ApplicationWindow {
                     width: parent.width
                     height: Theme.controlHeight(Theme.compact ? 34 : 44)
                     hoverEnabled: true
-                ToolTip.visible: hovered && win.narrowLayout
+                ToolTip.visible: hovered && win.sidebarCompact
                 ToolTip.text: Accessible.name
                     Accessible.name: modelData.page
                     onClicked: win.navigate(modelData.page)
@@ -1725,17 +1786,17 @@ ApplicationWindow {
                         border.color: win.accent
                     }
                     contentItem: RowLayout {
-                        spacing: win.narrowLayout ? 0 : Theme.gap(13)
+                        spacing: win.sidebarCompact ? 0 : Theme.gap(13)
                         Icon {
                             name: navButton.modelData.icon
                             color: win.activePage === navButton.modelData.page ? win.accent : Theme.muted
                             Layout.preferredWidth: Theme.dp(19)
                             Layout.preferredHeight: Theme.dp(19)
-                            Layout.leftMargin: win.narrowLayout ? 0 : Theme.gap(12)
+                            Layout.leftMargin: win.sidebarCompact ? 0 : Theme.gap(12)
                         }
                         Text {
                             text: navButton.modelData.page
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                             color: win.activePage === navButton.modelData.page ? win.accent : Theme.secondary
                             font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(navButton.modelData.page === "Listening dashboard" ? 10 : 12)
                             font.weight: win.activePage === navButton.modelData.page ? Font.DemiBold : Font.Normal
@@ -1746,7 +1807,7 @@ ApplicationWindow {
                             Layout.preferredHeight: Theme.dp(5)
                             radius: Theme.dp(3)
                             color: win.accent
-                            visible: !win.narrowLayout && win.activePage === navButton.modelData.page
+                            visible: !win.sidebarCompact && win.activePage === navButton.modelData.page
                             Layout.rightMargin: Theme.gap(10)
                         }
                     }
@@ -1761,7 +1822,7 @@ ApplicationWindow {
             }
             Text {
                 text: "COLLECTION"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                 x: Theme.dp(13)
                 height: Theme.controlHeight(Theme.compact ? 28 : 36)
                 verticalAlignment: Text.AlignVCenter
@@ -1776,7 +1837,7 @@ ApplicationWindow {
                 width: parent.width
                 height: Theme.controlHeight(Theme.compact ? 34 : 44)
                 hoverEnabled: true
-                ToolTip.visible: hovered && win.narrowLayout
+                ToolTip.visible: hovered && win.sidebarCompact
                 ToolTip.text: Accessible.name
                 Accessible.name: "Favorites"
                 onClicked: win.navigate("Favorites")
@@ -1787,25 +1848,25 @@ ApplicationWindow {
                     border.color: win.accent
                 }
                 contentItem: RowLayout {
-                    spacing: win.narrowLayout ? 0 : Theme.gap(13)
+                    spacing: win.sidebarCompact ? 0 : Theme.gap(13)
                     Icon {
                         name: "heart"
                         color: win.favoriteCount > 0 ? "#ef4444" : win.activePage === "Favorites" ? win.accent : Theme.muted
                         filled: win.favoriteCount > 0
                         Layout.preferredWidth: Theme.dp(19)
                         Layout.preferredHeight: Theme.dp(19)
-                        Layout.leftMargin: win.narrowLayout ? 0 : Theme.gap(12)
+                        Layout.leftMargin: win.sidebarCompact ? 0 : Theme.gap(12)
                     }
                     Text {
                         text: "Favorites"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: win.activePage === "Favorites" ? win.accent : Theme.secondary
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                         Layout.fillWidth: true
                     }
                     Text {
                         text: win.favoriteCount
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: Theme.muted
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)
                         Layout.rightMargin: Theme.gap(10)
@@ -1818,7 +1879,7 @@ ApplicationWindow {
                 width: parent.width
                 height: Theme.controlHeight(Theme.compact ? 34 : 44)
                 hoverEnabled: true
-                ToolTip.visible: hovered && win.narrowLayout
+                ToolTip.visible: hovered && win.sidebarCompact
                 ToolTip.text: Accessible.name
                 Accessible.name: "Most Played"
                 onClicked: win.navigate("Most Played")
@@ -1829,17 +1890,17 @@ ApplicationWindow {
                     border.color: win.accent
                 }
                 contentItem: RowLayout {
-                    spacing: win.narrowLayout ? 0 : Theme.gap(13)
+                    spacing: win.sidebarCompact ? 0 : Theme.gap(13)
                     Icon {
                         name: "played"
                         color: win.activePage === "Most Played" ? win.accent : Theme.muted
                         Layout.preferredWidth: Theme.dp(19)
                         Layout.preferredHeight: Theme.dp(19)
-                        Layout.leftMargin: win.narrowLayout ? 0 : Theme.gap(12)
+                        Layout.leftMargin: win.sidebarCompact ? 0 : Theme.gap(12)
                     }
                     Text {
                         text: "Most Played"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: win.activePage === "Most Played" ? win.accent : Theme.secondary
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                         Layout.fillWidth: true
@@ -1852,7 +1913,7 @@ ApplicationWindow {
                 width: parent.width
                 height: Theme.controlHeight(Theme.compact ? 34 : 44)
                 hoverEnabled: true
-                ToolTip.visible: hovered && win.narrowLayout
+                ToolTip.visible: hovered && win.sidebarCompact
                 ToolTip.text: Accessible.name
                 Accessible.name: "Playlists"
                 onClicked: win.navigate("Playlists")
@@ -1863,24 +1924,24 @@ ApplicationWindow {
                     border.color: win.accent
                 }
                 contentItem: RowLayout {
-                    spacing: win.narrowLayout ? 0 : Theme.gap(13)
+                    spacing: win.sidebarCompact ? 0 : Theme.gap(13)
                     Icon {
                         name: "queue"
                         color: win.activePage === "Playlists" ? win.accent : Theme.muted
                         Layout.preferredWidth: Theme.dp(19)
                         Layout.preferredHeight: Theme.dp(19)
-                        Layout.leftMargin: win.narrowLayout ? 0 : Theme.gap(12)
+                        Layout.leftMargin: win.sidebarCompact ? 0 : Theme.gap(12)
                     }
                     Text {
                         text: "Playlists"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: win.activePage === "Playlists" ? win.accent : Theme.secondary
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                         Layout.fillWidth: true
                     }
                     Text {
                         text: library.playlists.count
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: Theme.muted
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11)
                         Layout.rightMargin: Theme.gap(10)
@@ -1892,7 +1953,7 @@ ApplicationWindow {
                 width: parent.width
                 height: Theme.controlHeight(Theme.compact ? 34 : 44)
                 hoverEnabled: true
-                ToolTip.visible: hovered && win.narrowLayout
+                ToolTip.visible: hovered && win.sidebarCompact
                 ToolTip.text: Accessible.name
                 Accessible.name: "Add music folder"
                 onClicked: folderDialog.open()
@@ -1903,17 +1964,17 @@ ApplicationWindow {
                     border.color: win.accent
                 }
                 contentItem: RowLayout {
-                    spacing: win.narrowLayout ? 0 : Theme.gap(13)
+                    spacing: win.sidebarCompact ? 0 : Theme.gap(13)
                     Icon {
                         name: "folder"
                         color: Theme.muted
                         Layout.preferredWidth: Theme.dp(19)
                         Layout.preferredHeight: Theme.dp(19)
-                        Layout.leftMargin: win.narrowLayout ? 0 : Theme.gap(12)
+                        Layout.leftMargin: win.sidebarCompact ? 0 : Theme.gap(12)
                     }
                     Text {
                         text: "Add a folder"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         color: Theme.secondary
                         font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(12)
                         Layout.fillWidth: true
@@ -1921,7 +1982,7 @@ ApplicationWindow {
                     Icon {
                         name: "plus"
                         color: Theme.muted
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                         Layout.preferredWidth: Theme.dp(14)
                         Layout.preferredHeight: Theme.dp(14)
                         Layout.rightMargin: Theme.gap(8)
@@ -1946,11 +2007,31 @@ ApplicationWindow {
             }
             Text {
                 text: "Musica"
-                        visible: !win.narrowLayout
+                        visible: !win.sidebarCompact
                 color: Theme.muted
                 font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(10)
             }
         }
+    }
+
+    MouseArea {
+        objectName: "sidebarResizeHandle"
+        x: sidebar.width - width / 2; y: 0
+        width: Theme.dp(8); height: sidebar.height; z: 4
+        enabled: !win.narrowLayout && !win.fullscreenNowPlaying
+        hoverEnabled: true; cursorShape: Qt.SplitHCursor
+        activeFocusOnTab: true
+        Accessible.name: "Resize sidebar"
+        onPositionChanged: function(mouse) {
+            if (!pressed) return;
+            const size = mapToItem(win.contentItem, mouse.x, mouse.y).x / Theme.unitScale;
+            win.sidebarCollapsed = size < 110;
+            if (!win.sidebarCollapsed) win.sidebarSize = Math.round(Math.max(160, Math.min(340, size)));
+        }
+        onDoubleClicked: { win.sidebarCollapsed = false; win.sidebarSize = 222; }
+        Keys.onLeftPressed: win.sidebarSize = Math.max(160, win.sidebarSize - 10)
+        Keys.onRightPressed: { win.sidebarCollapsed = false; win.sidebarSize = Math.min(340, win.sidebarSize + 10); }
+        Rectangle { anchors.horizontalCenter: parent.horizontalCenter; width: Theme.dp(2); height: parent.height; visible: parent.containsMouse || parent.pressed || parent.activeFocus; color: Theme.accent }
     }
 
     Item {
@@ -1974,6 +2055,13 @@ ApplicationWindow {
                 top: parent.top
             }
             spacing: Theme.gap(win.narrowLayout ? 8 : 16)
+            IconButton {
+                objectName: "sidebarToggleButton"
+                symbol: "sidebar"
+                label: win.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                enabled: !win.narrowLayout
+                onClicked: win.sidebarCollapsed = !win.sidebarCollapsed
+            }
             IconButton {
                 objectName: "backButton"
                 symbol: "back"
@@ -2027,9 +2115,14 @@ ApplicationWindow {
                     placeholderTextColor: Theme.muted
                     selectByMouse: true
                     background: Item {}
-                    onTextChanged: win.searchQuery = text
-                    onAccepted: if (win.visibleTracks.count)
-                        win.playTrack(win.visibleTracks.get(0), win.visibleTracks.entries())
+                    onTextChanged: {
+                        if (!win.searching && text.trim() && !win.restoringNavigation) {
+                            win.searchReturnScroll = win.pageSnapshot().scroll;
+                            win.searchCategory = "song";
+                        }
+                        win.searchQuery = text;
+                    }
+                    onAccepted: if (searchResultsLoader.item) searchResultsLoader.item.playFirst()
                     Accessible.name: "Search library"
                 }
                 IconButton {
@@ -2062,7 +2155,7 @@ ApplicationWindow {
             }
             IconButton {
                 objectName: "advancedSearchButton"
-                visible: win.activePage === "Overview" || songsSection.visible
+                visible: win.searching || win.activePage === "Overview" || songsSection.visible
                 symbol: "filter"
                 label: "Advanced search" + (win.activeFilterCount ? " · " + win.activeFilterCount + " filters active" : "")
                 checked: win.activeFilterCount > 0
@@ -2104,6 +2197,7 @@ ApplicationWindow {
         Flickable {
             id: contentScroll
             objectName: "contentScroll"
+            visible: !win.searching && !win.artistAlbumsVisible
             anchors {
                 left: parent.left
                 right: parent.right
@@ -2355,6 +2449,36 @@ ApplicationWindow {
                         onClicked: win.setGroupSortDescending(!win.groupSortDescending)
                     }
                     IconButton {
+                        id: artworkSizeButton
+                        objectName: "artworkSizeButton"
+                        visible: !win.collectionListView
+                        symbol: "album"; label: "Adjust artwork size"
+                        onClicked: artworkSizing.open()
+                        Popup {
+                            id: artworkSizing
+                            width: Theme.dp(260)
+                            height: artworkSizingContent.implicitHeight + padding * 2
+                            x: Math.min(0, parent.width - width); y: parent.height
+                            padding: Theme.gap(16); margins: Theme.gap(8)
+                            background: Rectangle { color: Theme.surface; radius: Theme.dp(8); border.color: Theme.border }
+                            contentItem: ColumnLayout {
+                                id: artworkSizingContent
+                                Label { text: "Artwork size · " + win.artworkSize; color: Theme.text; font: Theme.controlFont }
+                                Slider {
+                                    objectName: "artworkSizeSlider"
+                                    Layout.fillWidth: true
+                                    from: 150; to: 320; stepSize: 10; snapMode: Slider.SnapAlways; value: win.artworkSize
+                                    Accessible.name: "Album and artist artwork size"
+                                    onMoved: {
+                                        const first = Math.max(0, groupGrid.indexAt(1, groupGrid.contentY + 1));
+                                        win.artworkSize = Math.round(value);
+                                        Qt.callLater(function() { groupGrid.positionViewAtIndex(first, GridView.Beginning); });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    IconButton {
                         objectName: "collectionViewToggle"
                         visible: win.activePage === "Albums" || win.activePage === "Artists"
                         symbol: win.collectionListView ? "grid" : "list"
@@ -2374,7 +2498,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(0, contentScroll.height - (pageHeading.visible ? pageHeading.implicitHeight + contentColumn.spacing : 0)
                         - (groupSorting.visible ? groupSorting.implicitHeight + contentColumn.spacing : 0))
-                    cellWidth: win.collectionListView ? width : Math.floor(width / Math.max(1, Math.floor(width / Theme.dp(220))))
+                    cellWidth: win.collectionListView ? width : Math.floor(width / Math.max(1, Math.floor(width / Theme.dp(win.artworkSize))))
                     cellHeight: win.collectionListView ? Math.max(Theme.dp(84), Theme.textPixels * 4.8) : Math.ceil(cellWidth + Math.max(Theme.dp(64), Theme.textPixels * 4))
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
@@ -2519,6 +2643,12 @@ ApplicationWindow {
                             implicitHeight: Math.max(Theme.controlHeight(33), contentItem.implicitHeight + Theme.gap(12))
                             enabled: win.visibleTracks.count > 0
                             onClicked: win.playAll(false)
+                        }
+                        ActionButton {
+                            objectName: "showArtistAlbumsButton"
+                            visible: win.collectionKind === "artist" && !!win.collectionName
+                            text: "Albums"; symbol: "album"; primary: false
+                            onClicked: win.artistAlbumView = true
                         }
                         ActionButton {
                             objectName: "editAlbumMetadataButton"
@@ -2722,7 +2852,13 @@ ApplicationWindow {
                             radius: Theme.dp(6)
                             readonly property bool current: win.currentUrl === track.fileUrl
                             readonly property bool reorderable: win.collectionKind === "playlist" && win.sortBy === "Order" && !win.searchQuery
-                            color: playlistDrop.containsDrag ? Theme.selected : win.selectedUrls.indexOf(track.fileUrl) >= 0 ? Theme.selected : current ? Theme.selected : rowMouse.containsMouse ? Theme.hover : "transparent"
+                            color: playlistDrop.containsDrag || win.selectedUrls.indexOf(track.fileUrl) >= 0 ? Theme.selected : current ? Theme.playing : rowMouse.containsMouse ? Theme.hover : "transparent"
+                            Rectangle {
+                                objectName: "playingIndicator" + songRow.index
+                                visible: songRow.current
+                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                width: Theme.dp(3); radius: Theme.dp(2); color: Theme.accent
+                            }
                             DropArea {
                                 id: playlistDrop
                                 objectName: "playlistDrop" + songRow.index
@@ -2906,6 +3042,22 @@ ApplicationWindow {
 
             }
         }
+    Loader {
+        id: searchResultsLoader
+        objectName: "searchResultsLoader"
+        anchors.fill: contentScroll
+        active: win.searching
+        visible: active
+        sourceComponent: SearchResultsPane { objectName: "searchResultsPane"; controller: win }
+    }
+    Loader {
+        id: artistAlbumsLoader
+        objectName: "artistAlbumsLoader"
+        anchors.fill: contentScroll
+        active: win.collectionKind === "artist" && !!win.collectionName && win.artistAlbumView && !win.restoringNavigation
+        visible: active && !win.searching
+        sourceComponent: ArtistAlbumsPane { objectName: "artistAlbumsPane"; controller: win }
+    }
     }
 
     Loader {
@@ -3025,6 +3177,8 @@ ApplicationWindow {
         id: queueEntries
         objectName: "queueEntries"
         function synchronize(entries) {
+            const current = entries.findIndex(entry => entry.id === win.currentQueueId);
+            const sections = new Map(entries.map((entry, index) => [entry.id, index === current ? "Now playing" : index < current ? "Previously played" : "Up next"]));
             if (win.queueSearch.trim()) {
                 const matching = new Set(library.queueSearchUrls(win.queueSearch, entries.map(entry => entry.fileUrl)));
                 entries = entries.filter(entry => matching.has(entry.fileUrl));
@@ -3043,9 +3197,10 @@ ApplicationWindow {
                     let existing = row + 1;
                     while (existing < count && get(existing).entryId !== entry.id) ++existing;
                     if (existing < count) move(existing, row, 1);
-                    else insert(row, {entryId: entry.id, fileUrl: entry.fileUrl});
+                    else insert(row, {entryId: entry.id, fileUrl: entry.fileUrl, queueSection: sections.get(entry.id)});
                 }
                 if (get(row).fileUrl !== entry.fileUrl) setProperty(row, "fileUrl", entry.fileUrl);
+                if (get(row).queueSection !== sections.get(entry.id)) setProperty(row, "queueSection", sections.get(entry.id));
             }
         }
         function indexOfEntry(id) {
@@ -3075,6 +3230,18 @@ ApplicationWindow {
             queueList.cancelFlick();
             queueList.forceLayout();
             queueList.positionViewAtIndex(queueEntries.indexOfEntry(win.currentQueueId), ListView.Center);
+            const entry = win.currentQueueId;
+            Qt.callLater(function() {
+                if (!win.queueOpen || entry !== win.currentQueueId) return;
+                queueList.forceLayout();
+                const index = queueEntries.indexOfEntry(entry);
+                queueList.positionViewAtIndex(index, ListView.Center);
+                const row = queueList.itemAtIndex(index);
+                if (row && row.height <= queueList.height) {
+                    if (row.y < queueList.contentY) queueList.contentY = row.y;
+                    else if (row.y + row.height > queueList.contentY + queueList.height) queueList.contentY = row.y + row.height - queueList.height;
+                }
+            });
         }
         padding: Theme.gap(win.shortLayout ? 12 : 18)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -3086,18 +3253,37 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             spacing: Theme.gap(win.shortLayout ? 6 : 12)
             RowLayout {
+                objectName: "queueTabs"
                 Layout.fillWidth: true
-                ComboBox {
-                    objectName: "activeQueueBox"
-                    Layout.fillWidth: true
+                spacing: Theme.gap(4)
+                Repeater {
                     model: library.savedQueues
-                    textRole: "name"
-                    currentIndex: {
-                        const entries = library.savedQueues;
-                        return Math.max(0, entries.findIndex(entry => entry.id === library.activeQueueId));
+                    delegate: Button {
+                        required property var modelData
+                        required property int index
+                        objectName: "queueTab" + index
+                        Layout.fillWidth: true; Layout.minimumWidth: 0
+                        checked: modelData.id === library.activeQueueId
+                        Accessible.name: "Switch to " + modelData.name
+                        ToolTip.visible: hovered; ToolTip.text: modelData.name
+                        onClicked: if (modelData.id !== library.activeQueueId) win.activateSavedQueue(modelData.id)
+                        contentItem: Text { text: parent.modelData.name; color: parent.checked ? Theme.accent : Theme.secondary; font: Theme.controlFont; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                        background: Rectangle { color: parent.checked ? Theme.selected : Theme.raised; radius: Theme.dp(6); border.color: parent.checked ? Theme.accent : "transparent" }
                     }
-                    onActivated: function(index) { win.activateSavedQueue(library.savedQueues[index].id); }
-                    Accessible.name: "Active play queue"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                TextField {
+                    id: queueSearchField
+                    objectName: "queueSearchField"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: Theme.dp(45)
+                    font: Theme.controlFont; selectByMouse: true
+                    placeholderText: "Search queue"
+                    maximumLength: 512
+                    onTextChanged: win.queueSearch = text
+                    Accessible.name: "Search queued songs by title, artist or album"
                 }
                 ActionButton {
                     objectName: "queueCurrentSongButton"
@@ -3146,23 +3332,9 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
-            RowLayout {
-                Layout.fillWidth: true
-                TextField {
-                    id: queueSearchField
-                    objectName: "queueSearchField"
-                    Layout.fillWidth: true; Layout.minimumWidth: 0
-                    font: Theme.controlFont; selectByMouse: true
-                    placeholderText: "Search this queue"
-                    maximumLength: 512
-                    onTextChanged: win.queueSearch = text
-                    Accessible.name: "Search queued songs by title, artist or album"
-                }
-                IconButton { symbol: "close"; label: "Clear queue search"; visible: win.queueSearch.length > 0; onClicked: queueSearchField.clear() }
-            }
             Label {
-                visible: win.queueSearch.length > 0
-                text: queueEntries.count + " matches · " + win.queueCount + " queued"
+                visible: win.queueSearch.length > 0 || !win.shortLayout
+                text: (win.queueSearch.length ? queueEntries.count + " matches · " : "") + win.queueCount + " queued"
                 color: Theme.muted; font: Theme.controlFont; Layout.fillWidth: true
             }
             ListView {
@@ -3176,6 +3348,14 @@ ApplicationWindow {
                 highlightFollowsCurrentItem: false
                 LibraryScrollHandler { view: queueList }
                 model: queueEntries
+                section.property: "queueSection"
+                section.criteria: ViewSection.FullString
+                section.delegate: Rectangle {
+                    required property string section
+                    width: queueList.width; height: Theme.controlHeight(28)
+                    color: Theme.surface
+                    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: parent.section; color: parent.section === "Now playing" ? Theme.accent : Theme.muted; font.family: Theme.preferences.fontFamily; font.pointSize: Theme.textSize(11); font.bold: true }
+                }
                 delegate: ItemDelegate {
                     id: queuedTrack
                     required property string entryId

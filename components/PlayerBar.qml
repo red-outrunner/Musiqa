@@ -60,6 +60,7 @@ Rectangle {
             IconButton {
                 objectName: "footerFavoriteButton"; symbol: "heart"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 label: root.track && root.track.favorite ? "Remove from favorites" : "Add to favorites"
                 enabled: !!root.track; filled: !!root.track && root.track.favorite
                 glyphColor: filled ? "#ef4444" : Theme.muted
@@ -74,6 +75,7 @@ Rectangle {
             IconButton {
                 objectName: "shuffleButton"; symbol: "shuffle"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 label: root.controller.shuffleEnabled ? "Turn shuffle off" : "Turn shuffle on"
                 checked: root.controller.shuffleEnabled
                 onClicked: root.controller.shuffleEnabled = !root.controller.shuffleEnabled
@@ -81,6 +83,7 @@ Rectangle {
             IconButton {
                 objectName: "previousButton"; symbol: "previous"; label: "Previous song"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 enabled: root.controller.queueUrls.length > 0; onClicked: root.controller.previousTrack()
             }
             IconButton {
@@ -94,11 +97,13 @@ Rectangle {
             IconButton {
                 objectName: "nextButton"; symbol: "next"; label: "Next song"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 enabled: root.controller.queueUrls.length > 0; onClicked: root.controller.nextTrack(false)
             }
             IconButton {
                 objectName: "repeatButton"; symbol: "repeat"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 label: root.controller.repeatMode === 0 ? "Repeat off" : root.controller.repeatMode === 1 ? "Repeat queue" : "Repeat song"
                 checked: root.controller.repeatMode !== 0
                 onClicked: root.controller.repeatMode = (root.controller.repeatMode + 1) % 3
@@ -108,7 +113,7 @@ Rectangle {
         }
         RowLayout {
             Layout.row: 1; Layout.column: root.stacked ? 0 : 1
-            Layout.columnSpan: root.stacked ? 2 : 1
+            Layout.columnSpan: 1
             Layout.fillWidth: true
             spacing: Theme.gap(8)
             Text {
@@ -143,40 +148,36 @@ Rectangle {
             }
         }
         RowLayout {
-            Layout.row: root.stacked ? 2 : 0; Layout.column: root.stacked ? 0 : 2
-            Layout.rowSpan: root.stacked ? 1 : 2; Layout.columnSpan: root.stacked ? 2 : 1
+            Layout.row: root.stacked ? 1 : 0; Layout.column: root.stacked ? 1 : 2
+            Layout.rowSpan: root.stacked ? 1 : 2; Layout.columnSpan: 1
             Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter
             spacing: Theme.gap(6)
             Item { Layout.fillWidth: root.stacked }
             IconButton {
                 objectName: "queueButton"; symbol: "queue"; label: "Play queue"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 checked: root.controller.queueOpen; onClicked: root.controller.queueOpen = !root.controller.queueOpen
             }
             IconButton {
-                objectName: "crossfadeSettingsButton"; symbol: "crossfade"
+                objectName: "playerMoreButton"; symbol: "more"; label: "More playback options"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
-                label: "Gapless / crossfade · " + (root.player.crossfadeEnabled ? root.player.crossfadeSeconds + " seconds" : "Crossfade off")
-                checked: root.player.crossfadeEnabled && root.player.crossfadeSeconds > 0
-                onClicked: root.transitionsRequested()
-            }
-            IconButton {
-                objectName: "sleepTimerButton"; symbol: "moon"
-                Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
-                label: root.player.sleepAfterTrack ? "Sleep after this song" : root.player.sleepRemainingMs > 0 ? "Sleep timer" : "Set sleep timer"
-                checked: root.player.sleepAfterTrack || root.player.sleepRemainingMs > 0
-                onClicked: root.sleepRequested()
-            }
-            IconButton {
-                objectName: "audioSettingsButton"; symbol: "headphones"
-                Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
-                label: "Audio output and equalizer settings"
-                checked: root.player.equalizerEnabled || root.player.outputMode === "mono"
-                onClicked: root.controller.openAudioSettings()
+                padding: Theme.gap(6)
+                checked: root.player.crossfadeEnabled || root.player.sleepAfterTrack || root.player.sleepRemainingMs > 0 || root.player.equalizerEnabled
+                onClicked: playerMore.popup()
+                Menu {
+                    id: playerMore
+                    objectName: "playerMoreMenu"
+                    font: Theme.controlFont
+                    MenuItem { objectName: "crossfadeSettingsButton"; text: "Gapless / crossfade · " + (root.player.crossfadeEnabled ? root.player.crossfadeSeconds + " s" : "Off"); onTriggered: root.transitionsRequested() }
+                    MenuItem { objectName: "sleepTimerButton"; text: "Sleep timer" + (root.player.sleepAfterTrack || root.player.sleepRemainingMs > 0 ? " · Active" : ""); onTriggered: root.sleepRequested() }
+                    MenuItem { objectName: "audioSettingsButton"; text: "Audio output & equalizer…"; onTriggered: root.controller.openAudioSettings() }
+                }
             }
             IconButton {
                 objectName: "muteButton"; symbol: root.controller.muted || root.library.volume === 0 ? "mute" : "volume"
                 Layout.preferredWidth: Theme.dp(28); Layout.preferredHeight: Theme.dp(28)
+                padding: Theme.gap(6)
                 label: root.controller.muted ? "Unmute" : "Mute"
                 onClicked: root.controller.muted = !root.controller.muted
             }

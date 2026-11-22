@@ -1,17 +1,19 @@
 import QtQuick
 import QtQuick.Controls
 import MusicPlayer 1.0
+import "SearchHighlight.js" as SearchHighlight
 
 Text {
     id: root
     property var track: null
     property string placeholder: ""
+    property string searchQuery: ""
     readonly property var credits: track ? (track.artistCredits || (track.artist ? [{id: track.artistId, name: track.artist}] : [])) : []
     signal artistChosen(var credit)
     function escaped(value) {
         return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
-    text: credits.length ? credits.map((credit, index) => '<a href="artist:' + index + '">' + escaped(credit.name) + '</a>').join(" · ") : escaped(placeholder)
+    text: credits.length ? credits.map((credit, index) => '<a href="artist:' + index + '">' + SearchHighlight.marked(credit.name, searchQuery, Theme.accent) + '</a>').join(" · ") : escaped(placeholder)
     textFormat: Text.StyledText
     color: artistMouse.artistLink ? Theme.accent : Theme.muted
     linkColor: color

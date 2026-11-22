@@ -77,6 +77,8 @@ public:
     LibraryViewModel *genres() { return &m_genres; }
     LibraryViewModel *playlists() { return &m_playlists; }
     LibraryViewModel *mostPlayed() { return &m_mostPlayed; }
+    Q_INVOKABLE LibraryViewModel *createCollectionView(const QString &kind, QObject *owner);
+    Q_INVOKABLE QVariantList artistAlbumTracks(const QString &artistId, const QString &albumId) const;
     int trackCount() const { return m_workingSetLoaded ? m_tracks.size() : m_databaseTrackCount; }
     int favoriteCount() const;
     QVariantList shelfAlbums() const;

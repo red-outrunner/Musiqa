@@ -38,6 +38,11 @@
         <file>components/SleepTimerPopup.qml</file>
         <file>components/MetadataEditor.qml</file>
         <file>components/MetadataTextField.qml</file>
+        <file>components/SearchHighlight.js</file>
+        <file>components/HighlightedText.qml</file>
+        <file>components/TrackResultRow.qml</file>
+        <file>components/SearchResultsPane.qml</file>
+        <file>components/ArtistAlbumsPane.qml</file>
         <file>components/BatchMetadataEditor.qml</file>
         <file>assets/musica.png</file>
         <file>components/OverviewPane.qml</file>

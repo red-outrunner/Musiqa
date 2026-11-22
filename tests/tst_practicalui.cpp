@@ -186,6 +186,98 @@ private slots:
         TrackListModel restored(QSettings().fileName(), false); QVERIFY(restored.collectionPinned("album", pinnedAlbum)); QCOMPARE(restored.pinnedCollections().size(), 1);
     }
 
+    void practicalLayoutSearchArtistAlbumsAndQueueTabsWorkTogether()
+    {
+        QVERIFY(seedLibrary());
+        QQmlApplicationEngine engine; QSignalSpy warnings(&engine, &QQmlApplicationEngine::warnings);
+        auto *window = loadWindow(engine); QVERIFY2(window, qPrintable(errors(warnings)));
+        auto *library = window->findChild<TrackListModel *>("library"); QVERIFY(library);
+        auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display);
+        const auto restore = qScopeGuard([display] { display->reset(); }); display->reset();
+        QTRY_VERIFY(window->property("sessionRestored").toBool());
+        auto *theme = engine.singletonInstance<QObject *>(qmlTypeId("MusicPlayer", 1, 0, "Theme")); QVERIFY(theme);
+        const auto scale = theme->property("unitScale").toReal();
+        window->resize(qRound(1400 * scale), qRound(900 * scale)); QTest::qWait(50);
+        auto *sidebar = findItem(window->contentItem(), "sidebar"); QVERIFY(sidebar);
+        const auto initialWidth = sidebar->width();
+        QVERIFY(click(window, "sidebarToggleButton")); QVERIFY(sidebar->width() < initialWidth);
+        QVERIFY(!findItem(window->contentItem(), "appWordmark")->isVisible());
+        QVERIFY(click(window, "sidebarToggleButton")); QCOMPARE(sidebar->width(), initialWidth);
+        auto *handle = findItem(window->contentItem(), "sidebarResizeHandle"); QVERIFY(handle);
+        const auto point = handle->mapToScene(QPointF(handle->width() / 2, 180)).toPoint();
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, point);
+        QTest::mouseMove(window, point + QPoint(60, 0), 20);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, point + QPoint(60, 0));
+        QVERIFY(sidebar->width() > initialWidth + 40);
+        QVERIFY(click(window, "navAlbums")); QTRY_VERIFY(findItem(window->contentItem(), "groupCard0"));
+        auto *grid = findItem(window->contentItem(), "groupGrid"); QVERIFY(grid);
+        QVERIFY(click(window, "artworkSizeButton")); QTest::qWait(30);
+        auto *sizing = findItem(window->contentItem(), "artworkSizeSlider"); QVERIFY(sizing);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, sizing->mapToScene(QPointF(sizing->width() - 1, sizing->height() / 2)).toPoint());
+        QTRY_COMPARE(window->property("artworkSize").toInt(), 320);
+        const auto larger = grid->property("cellWidth").toReal();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, sizing->mapToScene(QPointF(1, sizing->height() / 2)).toPoint());
+        QTRY_COMPARE(window->property("artworkSize").toInt(), 150);
+        QVERIFY(grid->property("cellWidth").toReal() < larger); QTest::keyClick(window, Qt::Key_Escape);
+
+        QVERIFY(click(window, "navArtists")); QTRY_VERIFY(findItem(window->contentItem(), "groupCard0"));
+        QVERIFY(click(window, "groupCard0"));
+        QTRY_VERIFY(findItem(window->contentItem(), "artistAlbumHeader0"));
+        QVERIFY(click(window, "artistAlbumHeader0")); QTRY_VERIFY(findItem(window->contentItem(), "artistAlbumSong1"));
+        QVERIFY(click(window, "artistAlbumSong1Select")); QCOMPARE(window->property("selectedCount").toInt(), 1);
+        QVERIFY(click(window, "clearSongSelection"));
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-artist-albums.png");
+        QVERIFY(click(window, "showArtistSongsButton")); QTRY_VERIFY(findItem(window->contentItem(), "songRow0")->isVisible());
+        const auto tracks = library->tracks(); QCOMPARE(tracks.size(), 2);
+        window->setProperty("currentUrl", tracks[0].toMap().value("fileUrl"));
+        window->setProperty("selectedUrls", QVariantList{tracks[1].toMap().value("fileUrl")});
+        auto *first = findItem(window->contentItem(), "songRow0"), *second = findItem(window->contentItem(), "songRow1"); QVERIFY(first && second);
+        QVERIFY(first->property("color") != second->property("color"));
+        QVERIFY(findItem(window->contentItem(), "playingIndicator0")->isVisible());
+
+        QVERIFY(click(window, "navFavorites"));
+        auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search); search->setProperty("text", "a");
+        QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList"));
+        auto *results = findItem(window->contentItem(), "searchResultsList");
+        QTRY_COMPARE(results->property("count").toInt(), 2); QCOMPARE(library->songs()->count(), 1);
+        QVERIFY(click(window, "searchCategory_artist")); QTRY_COMPARE(results->property("count").toInt(), 1);
+        QTRY_VERIFY(findItem(window->contentItem(), "searchGroup0")); QVERIFY(click(window, "searchGroup0"));
+        QTRY_COMPARE(window->property("collectionKind").toString(), QString("artist"));
+        QVERIFY(!window->property("searching").toBool());
+        QVERIFY(QMetaObject::invokeMethod(window, "goBack")); QTRY_VERIFY(window->property("searching").toBool());
+        QCOMPARE(window->property("activePage").toString(), QString("Favorites")); QCOMPARE(window->property("searchCategory").toString(), QString("artist"));
+        QVERIFY(click(window, "searchCategory_album")); QTest::qWait(30);
+        QTRY_COMPARE(window->property("appliedSearchQuery").toString(), QString("a"));
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-unified-search.png");
+        search->setProperty("text", "");
+        QVERIFY(click(window, "navSongs")); QTest::qWait(30);
+        QVERIFY(findItem(window->contentItem(), "playerMoreButton")->isVisible());
+        QVERIFY(click(window, "playerMoreButton")); QTest::qWait(30);
+        QVERIFY(click(window, "crossfadeSettingsButton"));
+        auto *options = window->findChild<QObject *>("playbackOptions"); QVERIFY(options && options->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(options, "close"));
+        for (int index = library->savedQueues().size(); index < 4; ++index)
+            QVERIFY(QMetaObject::invokeMethod(window, "createSavedQueue", Q_ARG(QVariant, QString("Queue %1").arg(index + 1))));
+        const QVariantList queuedSongs{tracks[0], tracks[1], tracks[0]};
+        QVERIFY(QMetaObject::invokeMethod(window, "handleBatchAction", Q_ARG(QVariant, QString("queue")), Q_ARG(QVariant, queuedSongs)));
+        const auto entries = values(window, "queueItems"); QCOMPARE(entries.size(), 3);
+        window->setProperty("currentQueueId", entries[1].toMap().value("id"));
+        QVERIFY(click(window, "queueButton")); QTest::qWait(40);
+        for (int index = 0; index < 4; ++index) QVERIFY(insideWindow(window, findItem(window->contentItem(), "queueTab" + QString::number(index))));
+        auto *model = qobject_cast<QAbstractItemModel *>(window->findChild<QObject *>("queueEntries")); QVERIFY(model);
+        const auto role = model->roleNames().key("queueSection", -1); QVERIFY(role >= 0);
+        QCOMPARE(model->data(model->index(0, 0), role).toString(), QString("Previously played"));
+        QCOMPARE(model->data(model->index(1, 0), role).toString(), QString("Now playing"));
+        QCOMPARE(model->data(model->index(2, 0), role).toString(), QString("Up next"));
+        window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-queue-tabs.png");
+        QVERIFY(click(window, "queueTab0")); QVERIFY(library->activeQueueId() == library->savedQueues()[0].toMap().value("id").toString());
+        window->setProperty("queueOpen", false);
+        QVERIFY(QMetaObject::invokeMethod(window, "savePagePreferences"));
+        QCOMPARE(library->savedViewState().value("artworkSize").toInt(), 150);
+        QVERIFY(library->savedViewState().value("sidebarSize").toInt() > 250);
+        QCOMPARE(warnings.size(), 0);
+    }
+
     void completedQueueAndPlaylistActionsDeselectTheirSongs()
     {
         QVERIFY(seedLibrary());
@@ -456,7 +548,9 @@ private slots:
         QTRY_COMPARE(window->property("activePage").toString(), QString("Overview"));
         auto *search = window->findChild<QObject *>("searchField"); QVERIFY(search);
         search->setProperty("text", "Search track");
-        QTRY_COMPARE(library->songs()->count(), 180); QTRY_VERIFY(!overview->isVisible() && songs->isVisible());
+        QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList"));
+        songs = findItem(window->contentItem(), "searchResultsList");
+        QTRY_COMPARE(songs->property("count").toInt(), 180); QTRY_VERIFY(!overview->isVisible() && songs->isVisible());
         QVERIFY(!outer->property("interactive").toBool()); QVERIFY(songs->property("interactive").toBool());
         QTRY_VERIFY(songs->height() > 60); QTest::qWait(50);
         wheel(songs, QPoint(0, -180), {}, Qt::ScrollUpdate);
@@ -467,10 +561,10 @@ private slots:
         QTest::qWait(130);
         for (int i = 0; i < 25; ++i) { wheel(songs, QPoint(0, -1000), {}, Qt::ScrollUpdate); QTest::qWait(5); }
         QTRY_VERIFY(songs->property("atYEnd").toBool());
-        QTRY_VERIFY(findItem(window->contentItem(), "songRow179"));
+        QTRY_VERIFY(findItem(window->contentItem(), "searchSong179"));
         window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-overview-search-" + QString::fromLatin1(QTest::currentDataTag()) + ".png");
         search->setProperty("text", "no matching title"); QTRY_COMPARE(library->songs()->count(), 0);
-        search->setProperty("text", ""); QTRY_VERIFY(overview->isVisible() && !songs->isVisible());
+        search->setProperty("text", ""); QTRY_VERIFY(overview->isVisible());
         QVERIFY(outer->property("interactive").toBool());
         QCOMPARE(warnings.size(), 0);
     }
@@ -641,12 +735,15 @@ private slots:
             QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, resizePoint.toPoint() + QPoint(40, 0)); QTest::qWait(50);
             for (const auto &entry : display->songColumns()) if (entry.toMap().value("key") == "duration") savedDurationWidth = entry.toMap().value("width").toInt();
             QVERIFY(savedDurationWidth > oldWidth + 20);
+            savedX = songs->property("contentX").toReal();
             window->findChild<QObject *>("searchField")->setProperty("text", "Extra");
             window->setProperty("songFilters", QVariantMap{{"genre", "Jazz"}}); window->setProperty("sortBy", "Artist");
             auto *library = window->findChild<TrackListModel *>("library"); QTRY_COMPARE(library->songs()->count(), 118);
-            QMetaObject::invokeMethod(songs, "forceLayout"); QTest::qWait(40);
-            songs->setProperty("contentY", 1000); songs->setProperty("contentX", 50); QTest::qWait(40);
-            savedY = songs->property("contentY").toReal(); savedX = songs->property("contentX").toReal();
+            QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList"));
+            auto *results = findItem(window->contentItem(), "searchResultsList");
+            QTRY_COMPARE(results->property("count").toInt(), 118); QTest::qWait(40);
+            results->setProperty("contentY", 1000); QTest::qWait(40);
+            savedY = results->property("contentY").toReal();
             QVERIFY(QMetaObject::invokeMethod(window, "savePagePreferences"));
             window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-custom-columns.png");
             QCOMPARE(warnings.size(), 0);
@@ -661,8 +758,11 @@ private slots:
             QCOMPARE(window->findChild<QObject *>("searchField")->property("text").toString(), QString("Extra"));
             auto *display = window->property("displayPreferences").value<DisplaySettings *>(); QVERIFY(display);
             QCOMPARE(display->songColumns().first().toMap().value("key").toString(), QString("year"));
+            QTRY_VERIFY(findItem(window->contentItem(), "searchResultsList"));
+            auto *results = findItem(window->contentItem(), "searchResultsList");
+            QTRY_VERIFY(std::abs(results->property("contentY").toReal() - savedY) < 5);
+            window->findChild<QObject *>("searchField")->setProperty("text", "");
             auto *songs = findItem(window->contentItem(), "songList"); QVERIFY(songs);
-            QTRY_VERIFY(std::abs(songs->property("contentY").toReal() - savedY) < 5);
             QTRY_VERIFY(std::abs(songs->property("contentX").toReal() - savedX) < 5);
             QVERIFY(click(window, "navAlbums")); QVERIFY(window->property("collectionListView").toBool());
             window->grabWindow().save(QCoreApplication::applicationDirPath() + "/musica-albums-list.png");
@@ -833,6 +933,8 @@ private slots:
         QVERIFY(!display->shortcuts().contains("miniPlayer"));
         for (const auto &value : display->shortcutOptions())
             QVERIFY(value.toMap().value("id").toString() != QStringLiteral("miniPlayer"));
+        QVERIFY(click(window, "playerMoreButton"));
+        QTest::qWait(40);
         auto *audioButton = findItem(window->contentItem(), "audioSettingsButton");
         QVERIFY(insideWindow(window, audioButton)); QVERIFY(click(window, "audioSettingsButton"));
         auto *dialog = window->findChild<QObject *>("displaySettingsDialog"); QVERIFY(dialog);
